@@ -77,3 +77,17 @@ export async function createCategory(req: Request, res: Response, next: NextFunc
     res.status(201).json({ success: true, message: 'Catégorie créée', data: category });
   } catch (error) { next(error); }
 }
+
+export async function updateCategory(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const category = await productsService.updateCategory(req.params.id, req.body);
+    res.json({ success: true, message: 'Catégorie mise à jour', data: category });
+  } catch (error) { next(error); }
+}
+
+export async function deleteCategory(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await productsService.deleteCategory(req.params.id);
+    res.json({ success: true, message: 'Catégorie supprimée avec succès' });
+  } catch (error) { next(error); }
+}

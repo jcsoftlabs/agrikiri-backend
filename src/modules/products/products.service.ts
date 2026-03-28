@@ -50,7 +50,8 @@ export async function getProducts(filters: {
 
   const skip = (page - 1) * limit;
 
-  const where: any = { isActive: true };
+  const adminMode = (filters as any).adminMode === true;
+  const where: any = adminMode ? {} : { isActive: true };
 
   if (categoryId) where.categoryId = categoryId;
   if (minPrice !== undefined) where.price = { ...where.price, gte: minPrice };
@@ -245,4 +246,58 @@ export async function createCategory(data: {
     .replace(/(^-|-$)/g, '');
 
   return prisma.category.create({ data: { ...data, slug } });
+}
+
+// ================================
+// UPDATE CATEGORY (Admin)
+// ================================
+
+export async function updateCategory(
+  id: string,
+  data: { name?: string; description?: string; imageUrl?: string; imagePublicId?: string }
+) {
+  const existing = await prisma.category.findUnique({ where: { id } });
+  if (!existing) throw createError('Catégorie introuvable', 404);
+
+  const updateData: any = { ...data };
+  if (data.name) {
+    updateData.slug = data.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+  }
+
+  // Si on change l'image, supprimer l'ancienne sur Cloudinary
+  if (data.imagePublicId && existing.imagePublicId && existing.imagePublicId !== data.imagePublicId) {
+    await deleteCloudinaryFile(existing.imagePublicId).catch(console.error);
+  }
+
+  return prisma.category.update({ where: { id }, data: updateData });
+}
+
+// ================================
+// DELETE CATEGORY (Admin)
+// ================================
+
+export async function deleteCategory(id: string) {
+  const category = await prisma.category.findUnique({
+    where: { id },
+    include: { _count: { select: { products: true } } },
+  });
+
+  if (!category) throw createError('Catégorie introuvable', 404);
+
+  if (category._count.products > 0) {
+    throw createError(
+      `Impossible de supprimer : ${category._count.products} produit(s) utilisent cette catégorie. Réaffectez-les d'abord.`,
+      409
+    );
+  }
+
+  // Supprimer image Cloudinary si elle existe
+  if (category.imagePublicId) {
+    await deleteCloudinaryFile(category.imagePublicId).catch(console.error);
+  }
+
+  await prisma.category.delete({ where: { id } });
 }

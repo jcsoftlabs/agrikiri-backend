@@ -9,12 +9,16 @@ router.get('/', productsController.getProducts);
 router.get('/categories', productsController.getCategories);
 router.get('/:slug', productsController.getProductBySlug);
 
-// Routes admin
+// Routes admin — Produits
 router.post('/', authenticate, requireAdmin, productsController.createProduct);
 router.patch('/:id', authenticate, requireAdmin, productsController.updateProduct);
 router.delete('/:id', authenticate, requireAdmin, productsController.deleteProduct);
 router.post('/:id/images', authenticate, requireAdmin, productsController.addProductImages);
 router.delete('/:id/images/:imageId', authenticate, requireAdmin, productsController.deleteProductImage);
+
+// Routes admin — Catégories
 router.post('/categories', authenticate, requireAdmin, productsController.createCategory);
+router.patch('/categories/:id', authenticate, requireAdmin, productsController.updateCategory);
+router.delete('/categories/:id', authenticate, requireAdmin, productsController.deleteCategory);
 
 export default router;
