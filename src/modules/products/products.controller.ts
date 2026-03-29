@@ -4,7 +4,7 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 
 export async function getProducts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, categoryId, minPrice, maxPrice, search, sortBy, sortOrder } = req.query;
+    const { page, limit, categoryId, minPrice, maxPrice, search, sortBy, sortOrder, adminMode } = req.query;
     const result = await productsService.getProducts({
       page: Number(page) || 1,
       limit: Number(limit) || 12,
@@ -14,6 +14,7 @@ export async function getProducts(req: Request, res: Response, next: NextFunctio
       search: search as string,
       sortBy: sortBy as string,
       sortOrder: sortOrder as string,
+      adminMode: String(adminMode) === 'true',
     });
     res.json({ success: true, data: result });
   } catch (error) { next(error); }

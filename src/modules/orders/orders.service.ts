@@ -13,6 +13,7 @@ export const createOrderSchema = z.object({
     .array(
       z.object({
         productId: z.string().uuid(),
+        productVariantId: z.string().uuid().optional(),
         quantity: z.number().int().positive(),
       })
     )
@@ -44,30 +45,57 @@ export async function createOrder(
   const orderItems: any[] = [];
 
   for (const item of items) {
-    const product = await prisma.product.findUnique({ where: { id: item.productId } });
+    let product = await prisma.product.findUnique({ where: { id: item.productId } });
+    let selectedVariant: {
+      id: string;
+      label: string;
+      price: any;
+      vpPoints: any;
+      stockQuantity: number;
+      isDefault: boolean;
+      productId: string;
+    } | null = null;
+
+    if (item.productVariantId) {
+      selectedVariant = await prisma.productVariant.findFirst({
+        where: {
+          id: item.productVariantId,
+          productId: item.productId,
+          isActive: true,
+        },
+      });
+
+      if (!selectedVariant) {
+        throw createError(`Variante introuvable ou indisponible: ${item.productVariantId}`, 400);
+      }
+    }
 
     if (!product || !product.isActive) {
       throw createError(`Produit introuvable ou indisponible: ${item.productId}`, 400);
     }
 
-    if (product.stockQuantity < item.quantity) {
+    const availableStock = selectedVariant ? selectedVariant.stockQuantity : product.stockQuantity;
+    if (availableStock < item.quantity) {
       throw createError(
-        `Stock insuffisant pour "${product.name}". Disponible: ${product.stockQuantity}`,
+        `Stock insuffisant pour "${product.name}". Disponible: ${availableStock}`,
         400
       );
     }
 
-    const itemTotal = Number(product.price) * item.quantity;
-    const itemVP = Number(product.vpPoints) * item.quantity;
+    const unitPrice = selectedVariant ? selectedVariant.price : product.price;
+    const unitVP = selectedVariant ? selectedVariant.vpPoints : product.vpPoints;
+    const itemTotal = Number(unitPrice) * item.quantity;
+    const itemVP = Number(unitVP) * item.quantity;
 
     totalAmount += itemTotal;
     totalVP += itemVP;
 
     orderItems.push({
       productId: item.productId,
+      productVariantId: selectedVariant?.id,
       quantity: item.quantity,
-      unitPrice: product.price,
-      vpPoints: product.vpPoints,
+      unitPrice,
+      vpPoints: unitVP,
     });
   }
 
@@ -99,17 +127,50 @@ export async function createOrder(
         },
       },
       include: {
-        items: { include: { product: { select: { name: true, images: { take: 1 } } } } },
+        items: {
+          include: {
+            product: { select: { name: true, images: { take: 1 } } },
+            productVariant: { select: { id: true, label: true } },
+          },
+        },
         customer: { select: { firstName: true, lastName: true, email: true } },
       },
     });
 
     // Décrémenter le stock
     for (const item of orderItems) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: { stockQuantity: { decrement: item.quantity } },
+      if (item.productVariantId) {
+        await tx.productVariant.update({
+          where: { id: item.productVariantId },
+          data: { stockQuantity: { decrement: item.quantity } },
+        });
+      }
+
+      const activeVariants = await tx.productVariant.findMany({
+        where: { productId: item.productId, isActive: true },
+        orderBy: { sortOrder: 'asc' },
       });
+
+      if (activeVariants.length > 0) {
+        const defaultVariant = activeVariants.find((variant: any) => variant.isDefault) ?? activeVariants[0];
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stockQuantity: activeVariants.reduce(
+              (sum: number, variant: any) => sum + variant.stockQuantity,
+              0
+            ),
+            price: defaultVariant.price,
+            weightLbs: defaultVariant.weightLbs,
+            vpPoints: defaultVariant.vpPoints,
+          },
+        });
+      } else {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stockQuantity: { decrement: item.quantity } },
+        });
+      }
     }
 
     return newOrder;
@@ -163,7 +224,10 @@ export async function getMyOrders(
       orderBy: { createdAt: 'desc' },
       include: {
         items: {
-          include: { product: { select: { name: true, images: { where: { isPrimary: true }, take: 1 } } } },
+          include: {
+            product: { select: { name: true, images: { where: { isPrimary: true }, take: 1 } } },
+            productVariant: { select: { id: true, label: true } },
+          },
         },
       },
     }),
@@ -181,7 +245,7 @@ export async function getOrderById(orderId: string, userId: string, isAdmin: boo
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
-      items: { include: { product: true } },
+      items: { include: { product: true, productVariant: true } },
       customer: { select: { firstName: true, lastName: true, email: true, phone: true } },
       ayizan: { select: { firstName: true, lastName: true, referralCode: true } },
     },

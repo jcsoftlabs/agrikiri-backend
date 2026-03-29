@@ -24,3 +24,32 @@ export async function getUsersList(req: AuthRequest, res: Response, next: NextFu
     next(error);
   }
 }
+
+export async function createUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = adminService.createAdminUserSchema.parse(req.body);
+    const user = await adminService.createUser(data);
+    res.status(201).json({ success: true, message: 'Utilisateur créé avec succès', data: user });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = adminService.updateAdminUserSchema.parse(req.body);
+    const user = await adminService.updateUser(req.params.id, data, req.user!.userId);
+    res.json({ success: true, message: 'Utilisateur mis à jour', data: user });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const user = await adminService.deleteUser(req.params.id, req.user!.userId);
+    res.json({ success: true, message: 'Utilisateur désactivé avec succès', data: user });
+  } catch (error) {
+    next(error);
+  }
+}

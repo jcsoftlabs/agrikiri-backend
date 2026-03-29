@@ -9,5 +9,8 @@ router.use(authenticate, requireAdmin);
 
 router.get('/dashboard-stats', adminController.getDashboardStats);
 router.get('/users', adminController.getUsersList);
+router.post('/users', adminController.createUser);
+router.patch('/users/:id', adminController.updateUser);
+router.delete('/users/:id', adminController.deleteUser);
 
 export default router;

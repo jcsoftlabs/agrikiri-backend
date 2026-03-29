@@ -1,27 +1,167 @@
+import { z } from 'zod';
 import { prisma } from '../../config/database';
 import { deleteCloudinaryFile } from '../../config/cloudinary';
 import { createError } from '../../middleware/error.middleware';
-import { z } from 'zod';
 
-// ================================
-// SCHEMAS
-// ================================
+const productInclude = {
+  category: { select: { id: true, name: true, slug: true } },
+  images: { orderBy: { order: 'asc' as const } },
+  variants: { orderBy: { sortOrder: 'asc' as const } },
+} as const;
 
-export const createProductSchema = z.object({
-  name: z.string().min(2, 'Nom trop court'),
-  description: z.string().min(10, 'Description trop courte'),
-  price: z.number().positive('Prix doit être positif'),
-  weightLbs: z.number().positive('Poids doit être positif'),
+const productVariantSchema = z.object({
+  id: z.string().uuid().optional(),
+  label: z.string().min(1, 'Le libelle de la variante est requis'),
+  price: z.number().positive('Prix doit etre positif'),
+  weightLbs: z.number().positive('Poids doit etre positif'),
   stockQuantity: z.number().int().min(0),
-  categoryId: z.string().uuid('ID de catégorie invalide'),
-  vpPoints: z.number().positive('Points VP doivent être positifs'),
-  images: z
-    .array(z.object({ url: z.string().url(), publicId: z.string() }))
-    .min(1, 'Au moins une image requise'),
+  vpPoints: z.number().positive('Points VP doivent etre positifs'),
   isActive: z.boolean().optional().default(true),
+  sortOrder: z.number().int().min(0).optional(),
 });
 
-export const updateProductSchema = createProductSchema.partial();
+const baseProductSchema = z.object({
+  name: z.string().min(2, 'Nom trop court'),
+  description: z.string().min(10, 'Description trop courte'),
+  categoryId: z.string().uuid('ID de categorie invalide'),
+  images: z
+    .array(z.object({ url: z.string().url(), publicId: z.string() }))
+    .min(1, 'Au moins une image requise')
+    .optional(),
+  isActive: z.boolean().optional().default(true),
+  variants: z.array(productVariantSchema).min(1, 'Au moins une variante est requise').optional(),
+  price: z.number().positive('Prix doit etre positif').optional(),
+  weightLbs: z.number().positive('Poids doit etre positif').optional(),
+  stockQuantity: z.number().int().min(0).optional(),
+  vpPoints: z.number().positive('Points VP doivent etre positifs').optional(),
+});
+
+export const createProductSchema = baseProductSchema.superRefine((data, ctx) => {
+  const hasLegacyFields =
+    data.price !== undefined &&
+    data.weightLbs !== undefined &&
+    data.stockQuantity !== undefined &&
+    data.vpPoints !== undefined;
+
+  if (!data.variants?.length && !hasLegacyFields) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Au moins une variante est requise',
+      path: ['variants'],
+    });
+  }
+
+  if (!data.images?.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Au moins une image requise',
+      path: ['images'],
+    });
+  }
+});
+
+export const updateProductSchema = baseProductSchema.partial();
+
+type ProductVariantInput = z.infer<typeof productVariantSchema>;
+type CreateProductInput = z.infer<typeof createProductSchema>;
+type UpdateProductInput = z.infer<typeof updateProductSchema>;
+type NormalizedProductVariant = {
+  id?: string;
+  label: string;
+  price: number;
+  weightLbs: number;
+  stockQuantity: number;
+  vpPoints: number;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
+function buildLegacyVariant(data: {
+  price?: number;
+  weightLbs?: number;
+  stockQuantity?: number;
+  vpPoints?: number;
+}): NormalizedProductVariant | null {
+  if (
+    data.price === undefined ||
+    data.weightLbs === undefined ||
+    data.stockQuantity === undefined ||
+    data.vpPoints === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    label: `${data.weightLbs} Livres`,
+    price: data.price,
+    weightLbs: data.weightLbs,
+    stockQuantity: data.stockQuantity,
+    vpPoints: data.vpPoints,
+    isActive: true,
+    sortOrder: 0,
+  };
+}
+
+function normalizeVariants(data: {
+  variants?: ProductVariantInput[];
+  price?: number;
+  weightLbs?: number;
+  stockQuantity?: number;
+  vpPoints?: number;
+}): NormalizedProductVariant[] {
+  const variants =
+    data.variants?.length
+      ? data.variants.map((variant, index) => ({
+          id: variant.id,
+          ...variant,
+          isActive: variant.isActive ?? true,
+          sortOrder: variant.sortOrder ?? index,
+        }))
+      : buildLegacyVariant(data)
+        ? [buildLegacyVariant(data)!]
+        : [];
+
+  if (variants.length === 0) {
+    throw createError('Au moins une variante est requise', 400);
+  }
+
+  const activeVariants = variants.filter((variant) => variant.isActive !== false);
+  if (activeVariants.length === 0) {
+    throw createError('Au moins une variante active est requise', 400);
+  }
+
+  return variants.map((variant, index) => ({
+    ...variant,
+    isActive: variant.isActive ?? true,
+    sortOrder: index,
+  }));
+}
+
+function getPrimaryVariant<T extends { isActive?: boolean; price: number; weightLbs: number; vpPoints: number }>(
+  variants: T[]
+) {
+  const activeVariants = variants.filter((variant) => variant.isActive !== false);
+  return activeVariants[0] ?? variants[0];
+}
+
+function deriveProductSnapshot(variants: Array<{ isActive?: boolean; price: number; weightLbs: number; stockQuantity: number; vpPoints: number }>) {
+  const activeVariants = variants.filter((variant) => variant.isActive !== false);
+  const primaryVariant = getPrimaryVariant(variants);
+
+  return {
+    price: primaryVariant.price,
+    weightLbs: primaryVariant.weightLbs,
+    vpPoints: primaryVariant.vpPoints,
+    stockQuantity: activeVariants.reduce((sum, variant) => sum + variant.stockQuantity, 0),
+  };
+}
 
 // ================================
 // GET ALL PRODUCTS
@@ -36,6 +176,7 @@ export async function getProducts(filters: {
   search?: string;
   sortBy?: string;
   sortOrder?: string;
+  adminMode?: boolean;
 }) {
   const {
     page = 1,
@@ -46,21 +187,21 @@ export async function getProducts(filters: {
     search,
     sortBy = 'createdAt',
     sortOrder = 'desc',
+    adminMode = false,
   } = filters;
 
   const skip = (page - 1) * limit;
-
-  const adminMode = (filters as any).adminMode === true;
-  const where: any = adminMode ? {} : { isActive: true };
+  const where: Record<string, unknown> = adminMode ? {} : { isActive: true };
 
   if (categoryId) where.categoryId = categoryId;
-  if (minPrice !== undefined) where.price = { ...where.price, gte: minPrice };
-  if (maxPrice !== undefined) where.price = { ...where.price, lte: maxPrice };
-  if (search)
+  if (minPrice !== undefined) where.price = { ...(where.price as object), gte: minPrice };
+  if (maxPrice !== undefined) where.price = { ...(where.price as object), lte: maxPrice };
+  if (search) {
     where.OR = [
       { name: { contains: search, mode: 'insensitive' } },
       { description: { contains: search, mode: 'insensitive' } },
     ];
+  }
 
   const [products, total] = await Promise.all([
     prisma.product.findMany({
@@ -69,8 +210,11 @@ export async function getProducts(filters: {
       take: limit,
       orderBy: { [sortBy]: sortOrder },
       include: {
-        category: { select: { id: true, name: true, slug: true } },
-        images: { orderBy: { order: 'asc' } },
+        ...productInclude,
+        variants: {
+          where: adminMode ? {} : { isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        },
       },
     }),
     prisma.product.count({ where }),
@@ -99,6 +243,10 @@ export async function getProductBySlug(slug: string) {
     include: {
       category: true,
       images: { orderBy: { order: 'asc' } },
+      variants: {
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      },
     },
   });
 
@@ -111,22 +259,20 @@ export async function getProductBySlug(slug: string) {
 // CREATE PRODUCT (Admin)
 // ================================
 
-export async function createProduct(data: z.infer<typeof createProductSchema>) {
-  const { images, ...productData } = data;
-
-  // Auto-generate slug
-  const slug = productData.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
+export async function createProduct(data: CreateProductInput) {
+  const { images = [], variants: _variants, ...productData } = data;
+  const variants = normalizeVariants({ ...productData, variants: _variants });
+  const snapshot = deriveProductSnapshot(variants);
+  const slug = slugify(productData.name);
 
   const product = await prisma.product.create({
     data: {
-      ...productData,
+      name: productData.name,
+      description: productData.description,
+      categoryId: productData.categoryId,
+      isActive: productData.isActive ?? true,
       slug,
-      price: productData.price,
-      weightLbs: productData.weightLbs,
-      vpPoints: productData.vpPoints,
+      ...snapshot,
       images: {
         create: images.map((img, index) => ({
           url: img.url,
@@ -135,8 +281,20 @@ export async function createProduct(data: z.infer<typeof createProductSchema>) {
           order: index,
         })),
       },
+      variants: {
+        create: variants.map((variant, index) => ({
+          label: variant.label,
+          price: variant.price,
+          weightLbs: variant.weightLbs,
+          stockQuantity: variant.stockQuantity,
+          vpPoints: variant.vpPoints,
+          isActive: variant.isActive,
+          isDefault: index === 0,
+          sortOrder: index,
+        })),
+      },
     },
-    include: { images: true, category: true },
+    include: productInclude,
   });
 
   return product;
@@ -146,19 +304,114 @@ export async function createProduct(data: z.infer<typeof createProductSchema>) {
 // UPDATE PRODUCT (Admin)
 // ================================
 
-export async function updateProduct(id: string, data: z.infer<typeof updateProductSchema>) {
-  const existing = await prisma.product.findUnique({ where: { id } });
-  if (!existing) throw createError('Produit introuvable', 404);
-
-  const { images, ...productData } = data;
-
-  const product = await prisma.product.update({
+export async function updateProduct(id: string, data: UpdateProductInput) {
+  const existing = await prisma.product.findUnique({
     where: { id },
-    data: productData as any,
-    include: { images: true, category: true },
+    include: { variants: { orderBy: { sortOrder: 'asc' } } },
   });
 
-  return product;
+  if (!existing) throw createError('Produit introuvable', 404);
+
+  const { variants, images: _images, ...productData } = data;
+
+  return prisma.$transaction(async (tx) => {
+    let snapshotUpdate: Record<string, number> = {};
+
+    if (variants?.length) {
+      const normalizedVariants = normalizeVariants({ variants });
+      const existingVariants = await tx.productVariant.findMany({
+        where: { productId: id },
+        orderBy: { sortOrder: 'asc' },
+      });
+
+      const existingVariantIds = new Set(existingVariants.map((variant) => variant.id));
+      const submittedVariantIds = new Set(
+        normalizedVariants.flatMap((variant) => (variant.id ? [variant.id] : []))
+      );
+
+      for (const variant of existingVariants) {
+        if (!submittedVariantIds.has(variant.id)) {
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: { isActive: false, isDefault: false },
+          });
+        }
+      }
+
+      const savedVariantIds: string[] = [];
+      for (const [index, variant] of normalizedVariants.entries()) {
+        if (variant.id && existingVariantIds.has(variant.id)) {
+          const updatedVariant = await tx.productVariant.update({
+            where: { id: variant.id },
+            data: {
+              label: variant.label,
+              price: variant.price,
+              weightLbs: variant.weightLbs,
+              stockQuantity: variant.stockQuantity,
+              vpPoints: variant.vpPoints,
+              isActive: variant.isActive,
+              isDefault: false,
+              sortOrder: index,
+            },
+          });
+          savedVariantIds.push(updatedVariant.id);
+        } else {
+          const createdVariant = await tx.productVariant.create({
+            data: {
+              productId: id,
+              label: variant.label,
+              price: variant.price,
+              weightLbs: variant.weightLbs,
+              stockQuantity: variant.stockQuantity,
+              vpPoints: variant.vpPoints,
+              isActive: variant.isActive,
+              isDefault: false,
+              sortOrder: index,
+            },
+          });
+          savedVariantIds.push(createdVariant.id);
+        }
+      }
+
+      await tx.productVariant.updateMany({
+        where: { productId: id },
+        data: { isDefault: false },
+      });
+
+      if (savedVariantIds[0]) {
+        await tx.productVariant.update({
+          where: { id: savedVariantIds[0] },
+          data: { isDefault: true },
+        });
+      }
+
+      snapshotUpdate = deriveProductSnapshot(normalizedVariants);
+    } else {
+      const legacyVariant = buildLegacyVariant(productData);
+      if (legacyVariant) {
+        snapshotUpdate = deriveProductSnapshot([legacyVariant]);
+      }
+    }
+
+    await tx.product.update({
+      where: { id },
+      data: {
+        ...(productData.name ? { name: productData.name, slug: slugify(productData.name) } : {}),
+        ...(productData.description ? { description: productData.description } : {}),
+        ...(productData.categoryId ? { categoryId: productData.categoryId } : {}),
+        ...(productData.isActive !== undefined ? { isActive: productData.isActive } : {}),
+        ...snapshotUpdate,
+      },
+    });
+
+    const updatedProduct = await tx.product.findUnique({
+      where: { id },
+      include: productInclude,
+    });
+
+    if (!updatedProduct) throw createError('Produit introuvable', 404);
+    return updatedProduct;
+  });
 }
 
 // ================================
@@ -173,7 +426,6 @@ export async function deleteProduct(id: string) {
 
   if (!product) throw createError('Produit introuvable', 404);
 
-  // Supprimer images Cloudinary
   await Promise.all(
     product.images.map((img) => deleteCloudinaryFile(img.publicId).catch(console.error))
   );
@@ -194,7 +446,7 @@ export async function addProductImages(
 
   const existingCount = await prisma.productImage.count({ where: { productId } });
 
-  const newImages = await prisma.$transaction(
+  return prisma.$transaction(
     images.map((img, index) =>
       prisma.productImage.create({
         data: {
@@ -207,8 +459,6 @@ export async function addProductImages(
       })
     )
   );
-
-  return newImages;
 }
 
 // ================================
@@ -240,12 +490,7 @@ export async function createCategory(data: {
   imageUrl?: string;
   imagePublicId?: string;
 }) {
-  const slug = data.name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-
-  return prisma.category.create({ data: { ...data, slug } });
+  return prisma.category.create({ data: { ...data, slug: slugify(data.name) } });
 }
 
 // ================================
@@ -257,17 +502,11 @@ export async function updateCategory(
   data: { name?: string; description?: string; imageUrl?: string; imagePublicId?: string }
 ) {
   const existing = await prisma.category.findUnique({ where: { id } });
-  if (!existing) throw createError('Catégorie introuvable', 404);
+  if (!existing) throw createError('Categorie introuvable', 404);
 
-  const updateData: any = { ...data };
-  if (data.name) {
-    updateData.slug = data.name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-  }
+  const updateData: Record<string, unknown> = { ...data };
+  if (data.name) updateData.slug = slugify(data.name);
 
-  // Si on change l'image, supprimer l'ancienne sur Cloudinary
   if (data.imagePublicId && existing.imagePublicId && existing.imagePublicId !== data.imagePublicId) {
     await deleteCloudinaryFile(existing.imagePublicId).catch(console.error);
   }
@@ -285,16 +524,15 @@ export async function deleteCategory(id: string) {
     include: { _count: { select: { products: true } } },
   });
 
-  if (!category) throw createError('Catégorie introuvable', 404);
+  if (!category) throw createError('Categorie introuvable', 404);
 
   if (category._count.products > 0) {
     throw createError(
-      `Impossible de supprimer : ${category._count.products} produit(s) utilisent cette catégorie. Réaffectez-les d'abord.`,
+      `Impossible de supprimer : ${category._count.products} produit(s) utilisent cette categorie. Reaffectez-les d'abord.`,
       409
     );
   }
 
-  // Supprimer image Cloudinary si elle existe
   if (category.imagePublicId) {
     await deleteCloudinaryFile(category.imagePublicId).catch(console.error);
   }
