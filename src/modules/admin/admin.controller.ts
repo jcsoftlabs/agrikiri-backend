@@ -11,6 +11,51 @@ export async function getDashboardStats(req: AuthRequest, res: Response, next: N
   }
 }
 
+export async function getReports(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { range, startDate, endDate, categoryId, productId, orderStatus, paymentStatus } = req.query;
+    const reports = await adminService.getReports(
+      (range as string) || '30d',
+      startDate as string | undefined,
+      endDate as string | undefined,
+      {
+        categoryId: categoryId as string | undefined,
+        productId: productId as string | undefined,
+        orderStatus: orderStatus as string | undefined,
+        paymentStatus: paymentStatus as string | undefined,
+      }
+    );
+    res.json({ success: true, data: reports });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function exportReportsCsv(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { range, startDate, endDate, type, categoryId, productId, orderStatus, paymentStatus } = req.query;
+    const exportType = type === 'commissions' ? 'commissions' : 'sales';
+    const csv = await adminService.exportReportsCsv(
+      exportType,
+      (range as string) || '30d',
+      startDate as string | undefined,
+      endDate as string | undefined,
+      {
+        categoryId: categoryId as string | undefined,
+        productId: productId as string | undefined,
+        orderStatus: orderStatus as string | undefined,
+        paymentStatus: paymentStatus as string | undefined,
+      }
+    );
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="rapport-${exportType}.csv"`);
+    res.send(csv);
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function getUsersList(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, search } = req.query;
