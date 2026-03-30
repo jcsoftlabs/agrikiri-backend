@@ -6,7 +6,7 @@ import { generateReferralCode } from '../../utils/mlm-calculator';
 import { createError } from '../../middleware/error.middleware';
 
 const SALT_ROUNDS = 12;
-const MINIMUM_PURCHASE_HTG = 25000;
+const MINIMUM_PURCHASE_HTG = 9500;
 
 // ================================
 // REGISTER
@@ -155,7 +155,7 @@ export async function becomeAyizan(userId: string) {
   if (user.role === 'AYIZAN') throw createError('Vous êtes déjà membre AYIZAN', 400);
   if (user.role === 'ADMIN') throw createError('Les administrateurs ne peuvent pas devenir AYIZAN', 400);
 
-  // Vérifier le premier achat minimum de 25,000 HTG
+  // Vérifier le premier achat minimum requis pour devenir AYIZAN
   const totalPurchases = await prisma.order.aggregate({
     where: {
       customerId: userId,
