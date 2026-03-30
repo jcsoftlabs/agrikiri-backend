@@ -22,6 +22,10 @@ import adminRoutes from './modules/admin/admin.routes';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Railway sits behind a reverse proxy in production, so Express must trust it
+// for client IP detection used by rate limiting and secure headers.
+app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+
 // ================================
 // SECURITY MIDDLEWARE
 // ================================
