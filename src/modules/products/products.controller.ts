@@ -2,9 +2,24 @@ import { Request, Response, NextFunction } from 'express';
 import * as productsService from './products.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
 
+function setNoStoreHeaders(res: Response) {
+  res.set({
+    'Cache-Control': 'private, no-store, no-cache, must-revalidate, max-age=0',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store',
+  });
+}
+
 export async function getProducts(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, categoryId, minPrice, maxPrice, search, sortBy, sortOrder, adminMode } = req.query;
+    const isAdminMode = String(adminMode) === 'true';
+
+    if (isAdminMode) {
+      setNoStoreHeaders(res);
+    }
+
     const result = await productsService.getProducts({
       page: Number(page) || 1,
       limit: Number(limit) || 12,
@@ -14,7 +29,7 @@ export async function getProducts(req: Request, res: Response, next: NextFunctio
       search: search as string,
       sortBy: sortBy as string,
       sortOrder: sortOrder as string,
-      adminMode: String(adminMode) === 'true',
+      adminMode: isAdminMode,
     });
     res.json({ success: true, data: result });
   } catch (error) { next(error); }
