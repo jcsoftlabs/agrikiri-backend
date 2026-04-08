@@ -3,6 +3,7 @@ import { createError } from '../../middleware/error.middleware';
 import { calculateOrderCommissions } from '../../utils/commission-engine';
 import { generateOrderNumber } from '../../utils/mlm-calculator';
 import { createPlopPlopPayment, verifyPlopPlopPayment } from '../../config/plopplop';
+import { sendOrderCreatedEmail, sendOrderPaidEmail, sendOrderStatusEmail } from '../../services/email.service';
 import { z } from 'zod';
 
 // ================================
@@ -44,6 +45,20 @@ function mapPaymentMethodToPlopPlop(method: z.infer<typeof createOrderSchema>['p
       return 'kashpaw' as const;
     default:
       return 'all' as const;
+  }
+}
+
+function getPaymentMethodLabel(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
+  switch (method) {
+    case 'MONCASH':
+      return 'MonCash';
+    case 'NATCASH':
+      return 'NatCash';
+    case 'KASHPAW':
+      return 'Kashpaw';
+    case 'CASH':
+    default:
+      return 'Paiement à la livraison';
   }
 }
 
@@ -220,6 +235,19 @@ export async function createOrder(
     },
   });
 
+  void sendOrderCreatedEmail({
+    to: order.customer.email,
+    customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+    orderNumber,
+    totalAmount,
+    paymentMethod: getPaymentMethodLabel(paymentMethod),
+    items: order.items.map((item: any) => ({
+      name: item.product.name,
+      quantity: item.quantity,
+      variantLabel: item.productVariant?.label || null,
+    })),
+  });
+
   return {
     order,
     payment:
@@ -262,10 +290,20 @@ export async function markOrderPaid(orderId: string) {
   const order = await prisma.order.update({
     where: { id: orderId },
     data: { paymentStatus: 'PAID', status: 'PROCESSING' },
+    include: {
+      customer: { select: { email: true, firstName: true, lastName: true } },
+    },
   });
 
   // Déclencher le calcul des commissions
   await calculateOrderCommissions(orderId);
+
+  void sendOrderPaidEmail({
+    to: order.customer.email,
+    customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+    orderNumber: order.orderNumber,
+    totalAmount: Number(order.totalAmount),
+  });
 
   return order;
 }
@@ -377,7 +415,12 @@ export async function updateOrderStatus(
   status: string,
   paymentStatus?: string
 ) {
-  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      customer: { select: { email: true, firstName: true, lastName: true } },
+    },
+  });
   if (!order) throw createError('Commande introuvable', 404);
 
   const updateData: any = { status };
@@ -391,6 +434,13 @@ export async function updateOrderStatus(
   // Si la commande est maintenant payée, déclencher les commissions
   if (paymentStatus === 'PAID' && order.paymentStatus !== 'PAID') {
     await calculateOrderCommissions(orderId);
+
+    void sendOrderPaidEmail({
+      to: order.customer.email,
+      customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+      orderNumber: order.orderNumber,
+      totalAmount: Number(updated.totalAmount),
+    });
   }
 
   // Notification au client
@@ -409,6 +459,13 @@ export async function updateOrderStatus(
         title: 'Mise à jour de commande',
         message: `Commande ${order.orderNumber}: ${statusMessages[status]}`,
       },
+    });
+
+    void sendOrderStatusEmail({
+      to: order.customer.email,
+      customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+      orderNumber: order.orderNumber,
+      statusLabel: statusMessages[status],
     });
   }
 

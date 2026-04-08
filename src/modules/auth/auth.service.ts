@@ -4,6 +4,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { RegisterInput, LoginInput } from './auth.schema';
 import { generateReferralCode } from '../../utils/mlm-calculator';
 import { createError } from '../../middleware/error.middleware';
+import { sendAyizanWelcomeEmail } from '../../services/email.service';
 
 const SALT_ROUNDS = 12;
 const MINIMUM_PURCHASE_HTG = 9500;
@@ -148,7 +149,7 @@ export async function refreshAccessToken(refreshToken: string) {
 export async function becomeAyizan(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, role: true, referralCode: true },
+    select: { id: true, role: true, referralCode: true, email: true, firstName: true },
   });
 
   if (!user) throw createError('Utilisateur introuvable', 404);
@@ -212,6 +213,12 @@ export async function becomeAyizan(userId: string) {
       title: '🌱 Bienvenue dans le réseau AGRIKIRI !',
       message: `Vous êtes maintenant AYIZAN. Votre code de parrainage est : ${referralCode}. Commencez à vendre et à recruter !`,
     },
+  });
+
+  void sendAyizanWelcomeEmail({
+    to: updatedUser.email,
+    firstName: updatedUser.firstName,
+    referralCode,
   });
 
   return updatedUser;
