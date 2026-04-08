@@ -37,6 +37,7 @@ enum OrderStatus {
 }
 
 enum PaymentMethod {
+  PLOPPLOP
   MONCASH
   CASH
   NATCASH

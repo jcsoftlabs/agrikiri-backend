@@ -27,7 +27,7 @@ export const createOrderSchema = z.object({
     city: z.string().min(2),
     department: z.string().min(2),
   }),
-  paymentMethod: z.enum(['MONCASH', 'CASH', 'NATCASH', 'KASHPAW']),
+  paymentMethod: z.enum(['PLOPPLOP', 'MONCASH', 'CASH', 'NATCASH', 'KASHPAW']),
   ayizanId: z.string().uuid().optional(),
 });
 
@@ -47,6 +47,8 @@ function isOnlinePaymentMethod(method: z.infer<typeof createOrderSchema>['paymen
 
 function mapPaymentMethodToPlopPlop(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
   switch (method) {
+    case 'PLOPPLOP':
+      return 'all' as const;
     case 'MONCASH':
       return 'moncash' as const;
     case 'NATCASH':
@@ -60,6 +62,8 @@ function mapPaymentMethodToPlopPlop(method: z.infer<typeof createOrderSchema>['p
 
 function getPaymentMethodLabel(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
   switch (method) {
+    case 'PLOPPLOP':
+      return 'PLOP PLOP';
     case 'MONCASH':
       return 'MonCash';
     case 'NATCASH':
