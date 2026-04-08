@@ -31,6 +31,16 @@ export const createOrderSchema = z.object({
   ayizanId: z.string().uuid().optional(),
 });
 
+export const updateOrderTrackingSchema = z.object({
+  carrierName: z.string().trim().max(120).optional(),
+  trackingNumber: z.string().trim().max(120).optional(),
+  estimatedDeliveryDate: z.string().trim().optional(),
+  eventTitle: z.string().trim().max(160).optional(),
+  eventDescription: z.string().trim().max(500).optional(),
+  eventStatus: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED']).optional(),
+  isCustomerVisible: z.boolean().optional(),
+});
+
 function isOnlinePaymentMethod(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
   return method !== 'CASH';
 }
@@ -60,6 +70,45 @@ function getPaymentMethodLabel(method: z.infer<typeof createOrderSchema>['paymen
     default:
       return 'Paiement à la livraison';
   }
+}
+
+function getStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    PENDING: 'Commande en attente',
+    PROCESSING: 'Commande en préparation',
+    SHIPPED: 'Commande expédiée',
+    DELIVERED: 'Commande livrée',
+    CANCELLED: 'Commande annulée',
+  };
+
+  return labels[status] || status;
+}
+
+async function createTrackingEvent(
+  prismaClient: typeof prisma,
+  orderId: string,
+  title: string,
+  description?: string,
+  status?: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
+  isCustomerVisible: boolean = true
+) {
+  await prismaClient.orderTrackingEvent.create({
+    data: {
+      orderId,
+      title,
+      description,
+      status,
+      isCustomerVisible,
+    },
+  });
+}
+
+function normalizeDateInput(value?: string) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 // ================================
@@ -186,6 +235,14 @@ export async function createOrder(
       },
     });
 
+    await createTrackingEvent(
+      tx,
+      newOrder.id,
+      'Commande créée',
+      `Commande enregistrée avec un paiement ${getPaymentMethodLabel(paymentMethod)}.`,
+      'PENDING'
+    );
+
     // Décrémenter le stock
     for (const item of orderItems) {
       if (item.productVariantId) {
@@ -298,6 +355,14 @@ export async function markOrderPaid(orderId: string) {
   // Déclencher le calcul des commissions
   await calculateOrderCommissions(orderId);
 
+  await createTrackingEvent(
+    prisma,
+    order.id,
+    'Paiement confirmé',
+    'Le paiement de la commande a été confirmé avec succès.',
+    'PROCESSING'
+  );
+
   void sendOrderPaidEmail({
     to: order.customer.email,
     customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
@@ -397,6 +462,7 @@ export async function getOrderById(orderId: string, userId: string, isAdmin: boo
       items: { include: { product: true, productVariant: true } },
       customer: { select: { firstName: true, lastName: true, email: true, phone: true } },
       ayizan: { select: { firstName: true, lastName: true, referralCode: true } },
+      trackingEvents: { orderBy: { createdAt: 'desc' } },
     },
   });
 
@@ -425,6 +491,12 @@ export async function updateOrderStatus(
 
   const updateData: any = { status };
   if (paymentStatus) updateData.paymentStatus = paymentStatus;
+  if (status === 'SHIPPED' && !order.shippedAt) {
+    updateData.shippedAt = new Date();
+  }
+  if (status === 'DELIVERED' && !order.deliveredAt) {
+    updateData.deliveredAt = new Date();
+  }
 
   const updated = await prisma.order.update({
     where: { id: orderId },
@@ -434,6 +506,14 @@ export async function updateOrderStatus(
   // Si la commande est maintenant payée, déclencher les commissions
   if (paymentStatus === 'PAID' && order.paymentStatus !== 'PAID') {
     await calculateOrderCommissions(orderId);
+
+    await createTrackingEvent(
+      prisma,
+      orderId,
+      'Paiement confirmé',
+      'Le paiement de la commande a été validé par l’administration.',
+      updated.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
+    );
 
     void sendOrderPaidEmail({
       to: order.customer.email,
@@ -461,6 +541,14 @@ export async function updateOrderStatus(
       },
     });
 
+    await createTrackingEvent(
+      prisma,
+      orderId,
+      getStatusLabel(status),
+      statusMessages[status],
+      status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
+    );
+
     void sendOrderStatusEmail({
       to: order.customer.email,
       customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
@@ -470,6 +558,72 @@ export async function updateOrderStatus(
   }
 
   return updated;
+}
+
+export async function updateOrderTracking(
+  orderId: string,
+  data: z.infer<typeof updateOrderTrackingSchema>
+) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      customer: { select: { email: true, firstName: true, lastName: true } },
+      trackingEvents: { orderBy: { createdAt: 'desc' }, take: 1 },
+    },
+  });
+
+  if (!order) throw createError('Commande introuvable', 404);
+
+  const estimatedDeliveryDate = normalizeDateInput(data.estimatedDeliveryDate);
+  const shouldUpdateTrackingFields =
+    data.carrierName !== undefined ||
+    data.trackingNumber !== undefined ||
+    data.estimatedDeliveryDate !== undefined;
+
+  if (shouldUpdateTrackingFields) {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        carrierName: data.carrierName?.trim() || null,
+        trackingNumber: data.trackingNumber?.trim() || null,
+        estimatedDeliveryDate,
+      },
+    });
+  }
+
+  const eventTitle = data.eventTitle?.trim();
+  const eventDescription = data.eventDescription?.trim();
+  const shouldCreateCustomEvent =
+    Boolean(eventTitle) ||
+    Boolean(eventDescription) ||
+    Boolean(data.eventStatus);
+
+  if (shouldCreateCustomEvent) {
+    await createTrackingEvent(
+      prisma,
+      orderId,
+      eventTitle || getStatusLabel(data.eventStatus || order.status),
+      eventDescription || undefined,
+      data.eventStatus,
+      data.isCustomerVisible ?? true
+    );
+  } else if (shouldUpdateTrackingFields) {
+    const carrierLabel = data.carrierName?.trim() || order.carrierName || 'transporteur non précisé';
+    const trackingSuffix = data.trackingNumber?.trim()
+      ? ` Numéro de suivi : ${data.trackingNumber.trim()}.`
+      : '';
+
+    await createTrackingEvent(
+      prisma,
+      orderId,
+      'Informations de livraison mises à jour',
+      `Les informations logistiques ont été mises à jour pour ${carrierLabel}.${trackingSuffix}`.trim(),
+      order.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
+      true
+    );
+  }
+
+  return getOrderById(orderId, order.customerId, true);
 }
 
 // ================================

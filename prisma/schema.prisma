@@ -177,14 +177,33 @@ model Order {
   deliveryAddress Json
   paymentMethod   PaymentMethod
   paymentStatus   PaymentStatus @default(PENDING)
+  carrierName     String?
+  trackingNumber  String?
+  estimatedDeliveryDate DateTime?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
   items           OrderItem[]
   commissions     Commission[]
+  trackingEvents  OrderTrackingEvent[]
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
   @@index([customerId])
   @@index([ayizanId])
   @@index([status])
+}
+
+model OrderTrackingEvent {
+  id                String      @id @default(uuid())
+  orderId           String
+  order             Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status            OrderStatus?
+  title             String
+  description       String?
+  isCustomerVisible Boolean     @default(true)
+  createdAt         DateTime    @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model OrderItem {

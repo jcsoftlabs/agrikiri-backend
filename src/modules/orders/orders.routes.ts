@@ -12,5 +12,6 @@ router.get('/all', requireAdmin, ordersController.getAllOrders);
 router.post('/:id/verify-payment', ordersController.verifyOrderPayment);
 router.get('/:id', ordersController.getOrderById);
 router.patch('/:id/status', requireAdmin, ordersController.updateOrderStatus);
+router.patch('/:id/tracking', requireAdmin, ordersController.updateOrderTracking);
 
 export default router;

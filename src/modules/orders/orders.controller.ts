@@ -42,6 +42,14 @@ export async function updateOrderStatus(req: AuthRequest, res: Response, next: N
   } catch (error) { next(error); }
 }
 
+export async function updateOrderTracking(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = ordersService.updateOrderTrackingSchema.parse(req.body);
+    const order = await ordersService.updateOrderTracking(req.params.id, data);
+    res.json({ success: true, message: 'Suivi logistique mis à jour', data: order });
+  } catch (error) { next(error); }
+}
+
 export async function getAllOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, status, paymentStatus } = req.query;
