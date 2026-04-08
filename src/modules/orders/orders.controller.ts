@@ -10,6 +10,14 @@ export async function createOrder(req: AuthRequest, res: Response, next: NextFun
   } catch (error) { next(error); }
 }
 
+export async function verifyOrderPayment(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const isAdmin = req.user!.role === 'ADMIN';
+    const result = await ordersService.verifyOrderPayment(req.params.id, req.user!.userId, isAdmin);
+    res.json({ success: true, message: 'Vérification du paiement effectuée', data: result });
+  } catch (error) { next(error); }
+}
+
 export async function getMyOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit } = req.query;

@@ -40,6 +40,7 @@ enum PaymentMethod {
   MONCASH
   CASH
   NATCASH
+  KASHPAW
 }
 
 enum PaymentStatus {

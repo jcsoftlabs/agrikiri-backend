@@ -2,6 +2,7 @@ import { prisma } from '../../config/database';
 import { createError } from '../../middleware/error.middleware';
 import { calculateOrderCommissions } from '../../utils/commission-engine';
 import { generateOrderNumber } from '../../utils/mlm-calculator';
+import { createPlopPlopPayment, verifyPlopPlopPayment } from '../../config/plopplop';
 import { z } from 'zod';
 
 // ================================
@@ -25,9 +26,26 @@ export const createOrderSchema = z.object({
     city: z.string().min(2),
     department: z.string().min(2),
   }),
-  paymentMethod: z.enum(['MONCASH', 'CASH', 'NATCASH']),
+  paymentMethod: z.enum(['MONCASH', 'CASH', 'NATCASH', 'KASHPAW']),
   ayizanId: z.string().uuid().optional(),
 });
+
+function isOnlinePaymentMethod(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
+  return method !== 'CASH';
+}
+
+function mapPaymentMethodToPlopPlop(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
+  switch (method) {
+    case 'MONCASH':
+      return 'moncash' as const;
+    case 'NATCASH':
+      return 'natcash' as const;
+    case 'KASHPAW':
+      return 'kashpaw' as const;
+    default:
+      return 'all' as const;
+  }
+}
 
 // ================================
 // CREATE ORDER
@@ -108,6 +126,22 @@ export async function createOrder(
   }
 
   const orderNumber = generateOrderNumber();
+  let paymentSession: { paymentUrl: string; transactionId: string | null } | null = null;
+
+  if (isOnlinePaymentMethod(paymentMethod)) {
+    try {
+      paymentSession = await createPlopPlopPayment({
+        referenceId: orderNumber,
+        amount: totalAmount,
+        method: mapPaymentMethodToPlopPlop(paymentMethod),
+      });
+    } catch (error: any) {
+      throw createError(
+        error?.message || 'Impossible d’initialiser le paiement en ligne pour cette commande.',
+        502
+      );
+    }
+  }
 
   // Créer la commande avec items
   const order = await prisma.$transaction(async (tx: any) => {
@@ -186,7 +220,25 @@ export async function createOrder(
     },
   });
 
-  return order;
+  return {
+    order,
+    payment:
+      paymentSession && isOnlinePaymentMethod(paymentMethod)
+        ? {
+            provider: 'PLOP_PLOP',
+            requiresRedirect: true,
+            paymentUrl: paymentSession.paymentUrl,
+            transactionId: paymentSession.transactionId,
+            referenceId: orderNumber,
+          }
+        : {
+            provider: null,
+            requiresRedirect: false,
+            paymentUrl: null,
+            transactionId: null,
+            referenceId: orderNumber,
+          },
+  };
 }
 
 // ================================
@@ -194,6 +246,19 @@ export async function createOrder(
 // ================================
 
 export async function markOrderPaid(orderId: string) {
+  const existing = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, paymentStatus: true },
+  });
+
+  if (!existing) {
+    throw createError('Commande introuvable', 404);
+  }
+
+  if (existing.paymentStatus === 'PAID') {
+    return prisma.order.findUnique({ where: { id: orderId } });
+  }
+
   const order = await prisma.order.update({
     where: { id: orderId },
     data: { paymentStatus: 'PAID', status: 'PROCESSING' },
@@ -203,6 +268,52 @@ export async function markOrderPaid(orderId: string) {
   await calculateOrderCommissions(orderId);
 
   return order;
+}
+
+export async function verifyOrderPayment(orderId: string, userId: string, isAdmin: boolean) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      orderNumber: true,
+      customerId: true,
+      paymentMethod: true,
+      paymentStatus: true,
+      totalAmount: true,
+      status: true,
+    },
+  });
+
+  if (!order) throw createError('Commande introuvable', 404);
+  if (!isAdmin && order.customerId !== userId) throw createError('Accès refusé', 403);
+  if (order.paymentMethod === 'CASH') {
+    throw createError('Cette commande ne nécessite pas de vérification de paiement en ligne.', 400);
+  }
+
+  const verification = await verifyPlopPlopPayment(order.orderNumber);
+  const transactionStatus = verification.trans_status === 'ok' ? 'PAID' : 'PENDING';
+
+  let updatedOrder = order;
+
+  if (verification.trans_status === 'ok' && order.paymentStatus !== 'PAID') {
+    updatedOrder = (await markOrderPaid(order.id)) as typeof order;
+  } else if (verification.trans_status !== 'ok' && order.paymentStatus === 'FAILED') {
+    updatedOrder = order;
+  }
+
+  return {
+    order: updatedOrder,
+    payment: {
+      provider: 'PLOP_PLOP',
+      referenceId: order.orderNumber,
+      transactionId: verification.id_transaction || null,
+      transactionStatus,
+      rawStatus: verification.trans_status || null,
+      method: verification.method || order.paymentMethod,
+      amount: verification.montant ?? Number(order.totalAmount),
+      verifiedAt: new Date().toISOString(),
+    },
+  };
 }
 
 // ================================
