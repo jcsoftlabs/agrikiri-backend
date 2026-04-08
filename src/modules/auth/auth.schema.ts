@@ -20,5 +20,21 @@ export const refreshSchema = z.object({
   refreshToken: z.string().min(1, 'Refresh token requis'),
 });
 
+export const customerAddressSchema = z.object({
+  label: z.string().trim().min(2, 'Libellé requis').max(60),
+  countryCode: z.enum(['HT', 'US']),
+  fullName: z.string().trim().min(2, 'Nom requis').max(120),
+  phoneCountryCode: z.enum(['+509', '+1']),
+  phoneNumber: z.string().trim().min(6, 'Téléphone requis').max(20),
+  addressLine1: z.string().trim().min(5, 'Adresse requise').max(160),
+  addressLine2: z.string().trim().max(160).optional().or(z.literal('')),
+  city: z.string().trim().min(2, 'Ville requise').max(100),
+  stateRegion: z.string().trim().min(2, 'Département ou État requis').max(100),
+  postalCode: z.string().trim().max(20).optional().or(z.literal('')),
+  deliveryInstructions: z.string().trim().max(300).optional().or(z.literal('')),
+  isDefault: z.boolean().optional(),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
+export type CustomerAddressInput = z.infer<typeof customerAddressSchema>;

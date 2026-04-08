@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { register, login, refresh, becomeAyizan, me } from './auth.controller';
+import { register, login, refresh, becomeAyizan, me, getMyAddresses, createAddress, updateAddress, setDefaultAddress, deleteAddress } from './auth.controller';
 import { authenticate } from '../../middleware/auth.middleware';
 import rateLimit from 'express-rate-limit';
 
@@ -24,5 +24,10 @@ router.post('/refresh', refresh);
 // Routes protégées
 router.get('/me', authenticate, me);
 router.post('/become-ayizan', authenticate, becomeAyizan);
+router.get('/addresses', authenticate, getMyAddresses);
+router.post('/addresses', authenticate, createAddress);
+router.patch('/addresses/:id', authenticate, updateAddress);
+router.patch('/addresses/:id/default', authenticate, setDefaultAddress);
+router.delete('/addresses/:id', authenticate, deleteAddress);
 
 export default router;

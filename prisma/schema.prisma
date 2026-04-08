@@ -95,8 +95,32 @@ model User {
   commissionSource     Commission[]    @relation("SourceCommissions")
   monthlyPerformances  MonthlyPerformance[]
   notifications        Notification[]
+  addresses            CustomerAddress[]
 
   @@index([sponsorId])
+}
+
+model CustomerAddress {
+  id                   String   @id @default(uuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label                String
+  countryCode          String
+  fullName             String
+  phoneCountryCode     String
+  phoneNumber          String
+  addressLine1         String
+  addressLine2         String?
+  city                 String
+  stateRegion          String
+  postalCode           String?
+  deliveryInstructions String?
+  isDefault            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, isDefault])
 }
 
 model Category {

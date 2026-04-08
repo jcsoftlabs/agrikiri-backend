@@ -1,13 +1,31 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../config/database';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../config/jwt';
-import { RegisterInput, LoginInput } from './auth.schema';
+import { RegisterInput, LoginInput, CustomerAddressInput } from './auth.schema';
 import { generateReferralCode } from '../../utils/mlm-calculator';
 import { createError } from '../../middleware/error.middleware';
 import { sendAyizanWelcomeEmail } from '../../services/email.service';
 
 const SALT_ROUNDS = 12;
 const MINIMUM_PURCHASE_HTG = 9500;
+
+const customerAddressSelect = {
+  id: true,
+  label: true,
+  countryCode: true,
+  fullName: true,
+  phoneCountryCode: true,
+  phoneNumber: true,
+  addressLine1: true,
+  addressLine2: true,
+  city: true,
+  stateRegion: true,
+  postalCode: true,
+  deliveryInstructions: true,
+  isDefault: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 // ================================
 // REGISTER
@@ -140,6 +158,125 @@ export async function refreshAccessToken(refreshToken: string) {
   });
 
   return { accessToken };
+}
+
+async function ensureSingleDefaultAddress(userId: string, keepAddressId?: string) {
+  await prisma.customerAddress.updateMany({
+    where: {
+      userId,
+      isDefault: true,
+      ...(keepAddressId ? { id: { not: keepAddressId } } : {}),
+    },
+    data: { isDefault: false },
+  });
+}
+
+export async function getMyAddresses(userId: string) {
+  return prisma.customerAddress.findMany({
+    where: { userId },
+    orderBy: [
+      { isDefault: 'desc' },
+      { updatedAt: 'desc' },
+    ],
+    select: customerAddressSelect,
+  });
+}
+
+export async function createAddress(userId: string, data: CustomerAddressInput) {
+  const existingCount = await prisma.customerAddress.count({ where: { userId } });
+  const shouldBeDefault = data.isDefault ?? existingCount === 0;
+
+  if (shouldBeDefault) {
+    await ensureSingleDefaultAddress(userId);
+  }
+
+  return prisma.customerAddress.create({
+    data: {
+      userId,
+      ...data,
+      addressLine2: data.addressLine2 || null,
+      postalCode: data.postalCode || null,
+      deliveryInstructions: data.deliveryInstructions || null,
+      isDefault: shouldBeDefault,
+    },
+    select: customerAddressSelect,
+  });
+}
+
+export async function updateAddress(userId: string, addressId: string, data: CustomerAddressInput) {
+  const existing = await prisma.customerAddress.findFirst({
+    where: { id: addressId, userId },
+    select: { id: true, userId: true },
+  });
+
+  if (!existing) {
+    throw createError('Adresse introuvable', 404);
+  }
+
+  if (data.isDefault) {
+    await ensureSingleDefaultAddress(userId, addressId);
+  }
+
+  return prisma.customerAddress.update({
+    where: { id: addressId },
+    data: {
+      ...data,
+      addressLine2: data.addressLine2 || null,
+      postalCode: data.postalCode || null,
+      deliveryInstructions: data.deliveryInstructions || null,
+      isDefault: data.isDefault ?? false,
+    },
+    select: customerAddressSelect,
+  });
+}
+
+export async function setDefaultAddress(userId: string, addressId: string) {
+  const existing = await prisma.customerAddress.findFirst({
+    where: { id: addressId, userId },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    throw createError('Adresse introuvable', 404);
+  }
+
+  await ensureSingleDefaultAddress(userId, addressId);
+
+  return prisma.customerAddress.update({
+    where: { id: addressId },
+    data: { isDefault: true },
+    select: customerAddressSelect,
+  });
+}
+
+export async function deleteAddress(userId: string, addressId: string) {
+  const existing = await prisma.customerAddress.findFirst({
+    where: { id: addressId, userId },
+    select: { id: true, isDefault: true },
+  });
+
+  if (!existing) {
+    throw createError('Adresse introuvable', 404);
+  }
+
+  await prisma.customerAddress.delete({ where: { id: addressId } });
+
+  if (existing.isDefault) {
+    const fallback = await prisma.customerAddress.findFirst({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      select: { id: true },
+    });
+
+    if (fallback) {
+      await prisma.customerAddress.update({
+        where: { id: fallback.id },
+        data: { isDefault: true },
+      });
+    }
+  }
+
+  return { success: true };
 }
 
 // ================================

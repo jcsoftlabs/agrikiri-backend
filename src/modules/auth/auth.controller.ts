@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { registerSchema, loginSchema, refreshSchema } from './auth.schema';
+import { registerSchema, loginSchema, refreshSchema, customerAddressSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
 
@@ -92,6 +92,53 @@ export async function me(req: AuthRequest, res: Response, next: NextFunction): P
     }
 
     res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getMyAddresses(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const addresses = await authService.getMyAddresses(req.user!.userId);
+    res.status(200).json({ success: true, data: addresses });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function createAddress(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = customerAddressSchema.parse(req.body);
+    const address = await authService.createAddress(req.user!.userId, data);
+    res.status(201).json({ success: true, message: 'Adresse enregistrée', data: address });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function updateAddress(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = customerAddressSchema.parse(req.body);
+    const address = await authService.updateAddress(req.user!.userId, req.params.id, data);
+    res.status(200).json({ success: true, message: 'Adresse mise à jour', data: address });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function setDefaultAddress(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const address = await authService.setDefaultAddress(req.user!.userId, req.params.id);
+    res.status(200).json({ success: true, message: 'Adresse par défaut mise à jour', data: address });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteAddress(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    await authService.deleteAddress(req.user!.userId, req.params.id);
+    res.status(200).json({ success: true, message: 'Adresse supprimée' });
   } catch (error) {
     next(error);
   }
