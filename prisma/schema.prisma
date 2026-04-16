@@ -50,6 +50,11 @@ enum PaymentStatus {
   FAILED
 }
 
+enum DeliveryMode {
+  INTERNAL
+  EXTERNAL
+}
+
 enum CommissionType {
   DIRECT
   NETWORK
@@ -200,9 +205,13 @@ model Order {
   totalAmount     Decimal       @db.Decimal(10, 2)
   totalVP         Decimal       @db.Decimal(10, 2)
   deliveryAddress Json
+  deliveryMode    DeliveryMode  @default(INTERNAL)
   paymentMethod   PaymentMethod
   paymentStatus   PaymentStatus @default(PENDING)
   carrierName     String?
+  deliveryAgentName  String?
+  deliveryAgentPhone String?
+  deliveryZone       String?
   trackingNumber  String?
   estimatedDeliveryDate DateTime?
   shippedAt       DateTime?

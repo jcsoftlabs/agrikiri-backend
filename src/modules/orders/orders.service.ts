@@ -38,7 +38,11 @@ export const createOrderSchema = z.object({
 });
 
 export const updateOrderTrackingSchema = z.object({
+  deliveryMode: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
   carrierName: z.string().trim().max(120).optional(),
+  deliveryAgentName: z.string().trim().max(120).optional(),
+  deliveryAgentPhone: z.string().trim().max(40).optional(),
+  deliveryZone: z.string().trim().max(120).optional(),
   trackingNumber: z.string().trim().max(120).optional(),
   estimatedDeliveryDate: z.string().trim().optional(),
   eventTitle: z.string().trim().max(160).optional(),
@@ -94,6 +98,10 @@ function getStatusLabel(status: string) {
   return labels[status] || status;
 }
 
+function getDeliveryModeLabel(mode: 'INTERNAL' | 'EXTERNAL') {
+  return mode === 'INTERNAL' ? 'Livraison AGRIKIRI' : 'Transporteur externe';
+}
+
 async function createTrackingEvent(
   prismaClient: typeof prisma,
   orderId: string,
@@ -130,6 +138,9 @@ export async function createOrder(
   data: z.infer<typeof createOrderSchema>
 ) {
   const { items, deliveryAddress, paymentMethod, ayizanId } = data;
+  const deliveryMode = deliveryAddress.countryCode === 'HT' ? 'INTERNAL' : 'EXTERNAL';
+  const defaultCarrierName = deliveryMode === 'INTERNAL' ? 'Livraison AGRIKIRI' : null;
+  const defaultDeliveryZone = [deliveryAddress.city, deliveryAddress.stateRegion].filter(Boolean).join(', ');
 
   // Récupérer les produits et calculer les totaux
   let totalAmount = 0;
@@ -227,9 +238,12 @@ export async function createOrder(
         totalAmount,
         totalVP,
         deliveryAddress,
+        deliveryMode,
         paymentMethod,
         status: 'PENDING',
         paymentStatus: 'PENDING',
+        carrierName: defaultCarrierName,
+        deliveryZone: defaultDeliveryZone || null,
         items: {
           create: orderItems,
         },
@@ -249,7 +263,7 @@ export async function createOrder(
       tx,
       newOrder.id,
       'Commande créée',
-      `Commande enregistrée avec un paiement ${getPaymentMethodLabel(paymentMethod)}.`,
+      `Commande enregistrée avec un paiement ${getPaymentMethodLabel(paymentMethod)}. ${deliveryMode === 'INTERNAL' ? 'Livraison AGRIKIRI prévue pour cette commande.' : 'Livraison via transporteur externe prévue.'}`,
       'PENDING'
     );
 
@@ -585,8 +599,13 @@ export async function updateOrderTracking(
   if (!order) throw createError('Commande introuvable', 404);
 
   const estimatedDeliveryDate = normalizeDateInput(data.estimatedDeliveryDate);
+  const nextDeliveryMode = data.deliveryMode ?? order.deliveryMode;
   const shouldUpdateTrackingFields =
+    data.deliveryMode !== undefined ||
     data.carrierName !== undefined ||
+    data.deliveryAgentName !== undefined ||
+    data.deliveryAgentPhone !== undefined ||
+    data.deliveryZone !== undefined ||
     data.trackingNumber !== undefined ||
     data.estimatedDeliveryDate !== undefined;
 
@@ -594,7 +613,16 @@ export async function updateOrderTracking(
     await prisma.order.update({
       where: { id: orderId },
       data: {
-        carrierName: data.carrierName?.trim() || null,
+        deliveryMode: nextDeliveryMode,
+        carrierName:
+          data.carrierName !== undefined
+            ? data.carrierName.trim() || (nextDeliveryMode === 'INTERNAL' ? 'Livraison AGRIKIRI' : null)
+            : nextDeliveryMode === 'INTERNAL'
+              ? order.carrierName || 'Livraison AGRIKIRI'
+              : order.carrierName,
+        deliveryAgentName: data.deliveryAgentName?.trim() || null,
+        deliveryAgentPhone: data.deliveryAgentPhone?.trim() || null,
+        deliveryZone: data.deliveryZone?.trim() || null,
         trackingNumber: data.trackingNumber?.trim() || null,
         estimatedDeliveryDate,
       },
@@ -618,16 +646,28 @@ export async function updateOrderTracking(
       data.isCustomerVisible ?? true
     );
   } else if (shouldUpdateTrackingFields) {
-    const carrierLabel = data.carrierName?.trim() || order.carrierName || 'transporteur non précisé';
-    const trackingSuffix = data.trackingNumber?.trim()
-      ? ` Numéro de suivi : ${data.trackingNumber.trim()}.`
-      : '';
+    const carrierLabel =
+      nextDeliveryMode === 'INTERNAL'
+        ? getDeliveryModeLabel('INTERNAL')
+        : data.carrierName?.trim() || order.carrierName || 'transporteur non précisé';
+    const trackingSuffix =
+      nextDeliveryMode === 'EXTERNAL' && data.trackingNumber?.trim()
+        ? ` Numéro de suivi : ${data.trackingNumber.trim()}.`
+        : '';
+    const agentSuffix =
+      nextDeliveryMode === 'INTERNAL' && data.deliveryAgentName?.trim()
+        ? ` Livreur assigné : ${data.deliveryAgentName.trim()}.`
+        : '';
+    const zoneSuffix =
+      nextDeliveryMode === 'INTERNAL' && data.deliveryZone?.trim()
+        ? ` Zone : ${data.deliveryZone.trim()}.`
+        : '';
 
     await createTrackingEvent(
       prisma,
       orderId,
       'Informations de livraison mises à jour',
-      `Les informations logistiques ont été mises à jour pour ${carrierLabel}.${trackingSuffix}`.trim(),
+      `Les informations logistiques ont été mises à jour pour ${carrierLabel}.${agentSuffix}${zoneSuffix}${trackingSuffix}`.trim(),
       order.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
       true
     );
