@@ -714,6 +714,69 @@ export async function getUsersList(page: number = 1, limit: number = 20, search?
   };
 }
 
+export async function getDeliveryAgentHistory(userId: string) {
+  const deliveryAgent = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      isActive: true,
+      role: true,
+      createdAt: true,
+    },
+  });
+
+  if (!deliveryAgent || deliveryAgent.role !== 'DELIVERY_AGENT') {
+    throw createError('Livreur introuvable', 404);
+  }
+
+  const [orders, total, delivered, failed, onRoad, pendingPickup] = await Promise.all([
+    prisma.order.findMany({
+      where: { deliveryAgentId: userId },
+      orderBy: { createdAt: 'desc' },
+      take: 25,
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        paymentMethod: true,
+        paymentStatus: true,
+        totalAmount: true,
+        createdAt: true,
+        deliveredAt: true,
+        shippedAt: true,
+        deliveryZone: true,
+        customer: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    }),
+    prisma.order.count({ where: { deliveryAgentId: userId } }),
+    prisma.order.count({ where: { deliveryAgentId: userId, status: 'DELIVERED' } }),
+    prisma.order.count({ where: { deliveryAgentId: userId, status: 'DELIVERY_FAILED' } }),
+    prisma.order.count({ where: { deliveryAgentId: userId, status: 'SHIPPED' } }),
+    prisma.order.count({ where: { deliveryAgentId: userId, status: 'PROCESSING' } }),
+  ]);
+
+  return {
+    deliveryAgent,
+    stats: {
+      total,
+      delivered,
+      failed,
+      onRoad,
+      pendingPickup,
+    },
+    orders,
+  };
+}
+
 export async function createUser(data: z.infer<typeof createAdminUserSchema>) {
   await ensureUniqueUserFields(data.email, data.phone);
 

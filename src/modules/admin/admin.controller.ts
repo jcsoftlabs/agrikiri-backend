@@ -71,6 +71,15 @@ export async function getUsersList(req: AuthRequest, res: Response, next: NextFu
   }
 }
 
+export async function getDeliveryAgentHistory(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const history = await adminService.getDeliveryAgentHistory(req.params.id);
+    res.json({ success: true, data: history });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function createUser(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const data = adminService.createAdminUserSchema.parse(req.body);

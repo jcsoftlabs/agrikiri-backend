@@ -48,12 +48,12 @@ export const updateOrderTrackingSchema = z.object({
   estimatedDeliveryDate: z.string().trim().optional(),
   eventTitle: z.string().trim().max(160).optional(),
   eventDescription: z.string().trim().max(500).optional(),
-  eventStatus: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED']).optional(),
+  eventStatus: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'DELIVERY_FAILED', 'CANCELLED']).optional(),
   isCustomerVisible: z.boolean().optional(),
 });
 
 export const deliveryAgentStatusSchema = z.object({
-  status: z.enum(['PROCESSING', 'SHIPPED', 'DELIVERED']),
+  status: z.enum(['PROCESSING', 'SHIPPED', 'DELIVERED', 'DELIVERY_FAILED']),
   note: z.string().trim().max(300).optional(),
 });
 
@@ -98,6 +98,7 @@ function getStatusLabel(status: string) {
     PROCESSING: 'Commande en préparation',
     SHIPPED: 'Commande expédiée',
     DELIVERED: 'Commande livrée',
+    DELIVERY_FAILED: 'Échec de livraison',
     CANCELLED: 'Commande annulée',
   };
 
@@ -145,7 +146,7 @@ async function createTrackingEvent(
   orderId: string,
   title: string,
   description?: string,
-  status?: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
+  status?: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED',
   isCustomerVisible: boolean = true
 ) {
   await prismaClient.orderTrackingEvent.create({
@@ -529,7 +530,7 @@ export async function getOrderById(orderId: string, userId: string, isAdmin: boo
   });
 
   if (!order) throw createError('Commande introuvable', 404);
-  if (!isAdmin && order.customerId !== userId) throw createError('Accès refusé', 403);
+  if (!isAdmin && order.customerId !== userId && order.deliveryAgentId !== userId) throw createError('Accès refusé', 403);
 
   return order;
 }
@@ -574,7 +575,7 @@ export async function updateOrderStatus(
       orderId,
       'Paiement confirmé',
       'Le paiement de la commande a été validé par l’administration.',
-      updated.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
+      updated.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED'
     );
 
     void sendOrderPaidEmail({
@@ -590,6 +591,7 @@ export async function updateOrderStatus(
     PROCESSING: '⚙️ Votre commande est en cours de traitement',
     SHIPPED: '🚚 Votre commande a été expédiée',
     DELIVERED: '✅ Votre commande a été livrée',
+    DELIVERY_FAILED: '⚠️ La livraison a échoué, notre équipe reprendra contact avec vous',
     CANCELLED: '❌ Votre commande a été annulée',
   };
 
@@ -608,7 +610,7 @@ export async function updateOrderStatus(
       orderId,
       getStatusLabel(status),
       statusMessages[status],
-      status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED'
+      status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED'
     );
 
     void sendOrderStatusEmail({
@@ -693,7 +695,7 @@ export async function updateOrderTracking(
       orderId,
       eventTitle || getStatusLabel(data.eventStatus || order.status),
       eventDescription || undefined,
-      data.eventStatus,
+      data.eventStatus as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED' | undefined,
       data.isCustomerVisible ?? true
     );
   } else if (shouldUpdateTrackingFields) {
@@ -719,7 +721,7 @@ export async function updateOrderTracking(
       orderId,
       'Informations de livraison mises à jour',
       `Les informations logistiques ont été mises à jour pour ${carrierLabel}.${agentSuffix}${zoneSuffix}${trackingSuffix}`.trim(),
-      order.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED',
+      order.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED',
       true
     );
   }
@@ -731,7 +733,7 @@ export async function getDeliveryAgentOrders(deliveryAgentId: string) {
   return prisma.order.findMany({
     where: {
       deliveryAgentId,
-      status: { in: ['PROCESSING', 'SHIPPED'] },
+      status: { in: ['PROCESSING', 'SHIPPED', 'DELIVERY_FAILED'] },
     },
     orderBy: [
       { status: 'asc' },
@@ -748,7 +750,7 @@ export async function getDeliveryAgentOrders(deliveryAgentId: string) {
 export async function updateDeliveryAgentOrderStatus(
   orderId: string,
   deliveryAgentId: string,
-  status: 'PROCESSING' | 'SHIPPED' | 'DELIVERED',
+  status: 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED',
   note?: string
 ) {
   const order = await prisma.order.findFirst({
@@ -765,23 +767,31 @@ export async function updateDeliveryAgentOrderStatus(
     data: {
       status,
       shippedAt: status === 'SHIPPED' && !order.shippedAt ? new Date() : order.shippedAt,
-      deliveredAt: status === 'DELIVERED' && !order.deliveredAt ? new Date() : order.deliveredAt,
+      deliveredAt: status === 'DELIVERED' && !order.deliveredAt ? new Date() : status === 'DELIVERY_FAILED' ? null : order.deliveredAt,
     },
   });
 
   await createTrackingEvent(
     prisma,
     orderId,
-    status === 'SHIPPED' ? 'Commande en route' : status === 'DELIVERED' ? 'Commande livrée' : 'Commande prise en charge',
-    note?.trim() || (
-      status === 'SHIPPED'
-        ? 'Le livreur AGRIKIRI est en route.'
-        : status === 'DELIVERED'
-          ? 'La commande a été remise au client.'
+    status === 'SHIPPED'
+      ? 'Commande en route'
+      : status === 'DELIVERED'
+        ? 'Commande livrée'
+        : status === 'DELIVERY_FAILED'
+          ? 'Échec de livraison'
+          : 'Commande prise en charge',
+      note?.trim() || (
+        status === 'SHIPPED'
+          ? 'Le livreur AGRIKIRI est en route.'
+          : status === 'DELIVERED'
+            ? 'La commande a été remise au client.'
+            : status === 'DELIVERY_FAILED'
+              ? 'La tentative de livraison a échoué.'
           : 'Le livreur AGRIKIRI a pris la commande en charge.'
-    ),
-    status,
-    true
+      ),
+      status,
+      true
   );
 
   return updated;
@@ -796,13 +806,15 @@ export async function getAllOrders(filters: {
   limit?: number;
   status?: string;
   paymentStatus?: string;
+  deliveryAgentId?: string;
 }) {
-  const { page = 1, limit = 20, status, paymentStatus } = filters;
+  const { page = 1, limit = 20, status, paymentStatus, deliveryAgentId } = filters;
   const skip = (page - 1) * limit;
 
   const where: any = {};
   if (status) where.status = status;
   if (paymentStatus) where.paymentStatus = paymentStatus;
+  if (deliveryAgentId) where.deliveryAgentId = deliveryAgentId;
 
   const [orders, total] = await Promise.all([
     prisma.order.findMany({
@@ -813,6 +825,7 @@ export async function getAllOrders(filters: {
       include: {
         customer: { select: { firstName: true, lastName: true, email: true } },
         ayizan: { select: { firstName: true, lastName: true } },
+        deliveryAgent: { select: { id: true, firstName: true, lastName: true, phone: true } },
         _count: { select: { items: true } },
       },
     }),

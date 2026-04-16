@@ -11,6 +11,7 @@ router.get('/dashboard-stats', adminController.getDashboardStats);
 router.get('/reports', adminController.getReports);
 router.get('/reports/export', adminController.exportReportsCsv);
 router.get('/users', adminController.getUsersList);
+router.get('/users/:id/delivery-history', adminController.getDeliveryAgentHistory);
 router.post('/users', adminController.createUser);
 router.patch('/users/:id', adminController.updateUser);
 router.delete('/users/:id', adminController.deleteUser);

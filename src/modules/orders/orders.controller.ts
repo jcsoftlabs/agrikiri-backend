@@ -67,12 +67,13 @@ export async function updateMyDeliveryStatus(req: AuthRequest, res: Response, ne
 
 export async function getAllOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, status, paymentStatus } = req.query;
+    const { page, limit, status, paymentStatus, deliveryAgentId } = req.query;
     const result = await ordersService.getAllOrders({
       page: Number(page) || 1,
       limit: Number(limit) || 20,
       status: status as string,
       paymentStatus: paymentStatus as string,
+      deliveryAgentId: deliveryAgentId as string | undefined,
     });
     res.json({ success: true, data: result });
   } catch (error) { next(error); }
