@@ -39,6 +39,7 @@ export const createOrderSchema = z.object({
 
 export const updateOrderTrackingSchema = z.object({
   deliveryMode: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
+  deliveryAgentId: z.string().uuid().optional().nullable(),
   carrierName: z.string().trim().max(120).optional(),
   deliveryAgentName: z.string().trim().max(120).optional(),
   deliveryAgentPhone: z.string().trim().max(40).optional(),
@@ -49,6 +50,11 @@ export const updateOrderTrackingSchema = z.object({
   eventDescription: z.string().trim().max(500).optional(),
   eventStatus: z.enum(['PENDING', 'PROCESSING', 'SHIPPED', 'DELIVERED', 'CANCELLED']).optional(),
   isCustomerVisible: z.boolean().optional(),
+});
+
+export const deliveryAgentStatusSchema = z.object({
+  status: z.enum(['PROCESSING', 'SHIPPED', 'DELIVERED']),
+  note: z.string().trim().max(300).optional(),
 });
 
 function isOnlinePaymentMethod(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
@@ -100,6 +106,38 @@ function getStatusLabel(status: string) {
 
 function getDeliveryModeLabel(mode: 'INTERNAL' | 'EXTERNAL') {
   return mode === 'INTERNAL' ? 'Livraison AGRIKIRI' : 'Transporteur externe';
+}
+
+async function resolveDeliveryAgentSnapshot(deliveryAgentId?: string | null) {
+  if (!deliveryAgentId) {
+    return {
+      deliveryAgentId: null,
+      deliveryAgentName: null,
+      deliveryAgentPhone: null,
+    };
+  }
+
+  const deliveryAgent = await prisma.user.findUnique({
+    where: { id: deliveryAgentId },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      role: true,
+      isActive: true,
+    },
+  });
+
+  if (!deliveryAgent || deliveryAgent.role !== 'DELIVERY_AGENT' || !deliveryAgent.isActive) {
+    throw createError('Livreur invalide ou indisponible', 400);
+  }
+
+  return {
+    deliveryAgentId: deliveryAgent.id,
+    deliveryAgentName: `${deliveryAgent.firstName} ${deliveryAgent.lastName}`.trim(),
+    deliveryAgentPhone: deliveryAgent.phone || null,
+  };
 }
 
 async function createTrackingEvent(
@@ -602,6 +640,7 @@ export async function updateOrderTracking(
   const nextDeliveryMode = data.deliveryMode ?? order.deliveryMode;
   const shouldUpdateTrackingFields =
     data.deliveryMode !== undefined ||
+    data.deliveryAgentId !== undefined ||
     data.carrierName !== undefined ||
     data.deliveryAgentName !== undefined ||
     data.deliveryAgentPhone !== undefined ||
@@ -610,6 +649,11 @@ export async function updateOrderTracking(
     data.estimatedDeliveryDate !== undefined;
 
   if (shouldUpdateTrackingFields) {
+    const resolvedDeliveryAgent =
+      data.deliveryAgentId !== undefined
+        ? await resolveDeliveryAgentSnapshot(data.deliveryAgentId)
+        : null;
+
     await prisma.order.update({
       where: { id: orderId },
       data: {
@@ -620,8 +664,15 @@ export async function updateOrderTracking(
             : nextDeliveryMode === 'INTERNAL'
               ? order.carrierName || 'Livraison AGRIKIRI'
               : order.carrierName,
-        deliveryAgentName: data.deliveryAgentName?.trim() || null,
-        deliveryAgentPhone: data.deliveryAgentPhone?.trim() || null,
+        ...(resolvedDeliveryAgent ? { deliveryAgentId: resolvedDeliveryAgent.deliveryAgentId } : {}),
+        deliveryAgentName:
+          resolvedDeliveryAgent
+            ? resolvedDeliveryAgent.deliveryAgentName
+            : data.deliveryAgentName?.trim() || order.deliveryAgentName || null,
+        deliveryAgentPhone:
+          resolvedDeliveryAgent
+            ? resolvedDeliveryAgent.deliveryAgentPhone
+            : data.deliveryAgentPhone?.trim() || order.deliveryAgentPhone || null,
         deliveryZone: data.deliveryZone?.trim() || null,
         trackingNumber: data.trackingNumber?.trim() || null,
         estimatedDeliveryDate,
@@ -655,8 +706,8 @@ export async function updateOrderTracking(
         ? ` Numéro de suivi : ${data.trackingNumber.trim()}.`
         : '';
     const agentSuffix =
-      nextDeliveryMode === 'INTERNAL' && data.deliveryAgentName?.trim()
-        ? ` Livreur assigné : ${data.deliveryAgentName.trim()}.`
+      nextDeliveryMode === 'INTERNAL' && (data.deliveryAgentName?.trim() || order.deliveryAgentName)
+        ? ` Livreur assigné : ${(data.deliveryAgentName?.trim() || order.deliveryAgentName)}.`
         : '';
     const zoneSuffix =
       nextDeliveryMode === 'INTERNAL' && data.deliveryZone?.trim()
@@ -674,6 +725,66 @@ export async function updateOrderTracking(
   }
 
   return getOrderById(orderId, order.customerId, true);
+}
+
+export async function getDeliveryAgentOrders(deliveryAgentId: string) {
+  return prisma.order.findMany({
+    where: {
+      deliveryAgentId,
+      status: { in: ['PROCESSING', 'SHIPPED'] },
+    },
+    orderBy: [
+      { status: 'asc' },
+      { createdAt: 'desc' },
+    ],
+    include: {
+      customer: { select: { firstName: true, lastName: true, email: true, phone: true } },
+      items: { include: { product: true, productVariant: true } },
+      trackingEvents: { orderBy: { createdAt: 'desc' }, take: 10 },
+    },
+  });
+}
+
+export async function updateDeliveryAgentOrderStatus(
+  orderId: string,
+  deliveryAgentId: string,
+  status: 'PROCESSING' | 'SHIPPED' | 'DELIVERED',
+  note?: string
+) {
+  const order = await prisma.order.findFirst({
+    where: { id: orderId, deliveryAgentId },
+    include: {
+      customer: { select: { email: true, firstName: true, lastName: true } },
+    },
+  });
+
+  if (!order) throw createError('Commande introuvable pour ce livreur', 404);
+
+  const updated = await prisma.order.update({
+    where: { id: orderId },
+    data: {
+      status,
+      shippedAt: status === 'SHIPPED' && !order.shippedAt ? new Date() : order.shippedAt,
+      deliveredAt: status === 'DELIVERED' && !order.deliveredAt ? new Date() : order.deliveredAt,
+    },
+  });
+
+  await createTrackingEvent(
+    prisma,
+    orderId,
+    status === 'SHIPPED' ? 'Commande en route' : status === 'DELIVERED' ? 'Commande livrée' : 'Commande prise en charge',
+    note?.trim() || (
+      status === 'SHIPPED'
+        ? 'Le livreur AGRIKIRI est en route.'
+        : status === 'DELIVERED'
+          ? 'La commande a été remise au client.'
+          : 'Le livreur AGRIKIRI a pris la commande en charge.'
+    ),
+    status,
+    true
+  );
+
+  return updated;
 }
 
 // ================================

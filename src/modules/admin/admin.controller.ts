@@ -58,11 +58,12 @@ export async function exportReportsCsv(req: AuthRequest, res: Response, next: Ne
 
 export async function getUsersList(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { page, limit, search } = req.query;
+    const { page, limit, search, role } = req.query;
     const users = await adminService.getUsersList(
       Number(page) || 1,
       Number(limit) || 20,
-      search as string
+      search as string,
+      role as 'CUSTOMER' | 'AYIZAN' | 'DELIVERY_AGENT' | 'ADMIN' | undefined
     );
     res.json({ success: true, data: users });
   } catch (error) {

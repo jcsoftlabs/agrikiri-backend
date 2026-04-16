@@ -7,7 +7,7 @@ import { generateReferralCode } from '../../utils/mlm-calculator';
 const SALT_ROUNDS = 12;
 const REPORT_RANGES = ['7d', '30d', '90d'] as const;
 
-const userRoleSchema = z.enum(['CUSTOMER', 'AYIZAN', 'ADMIN']);
+const userRoleSchema = z.enum(['CUSTOMER', 'AYIZAN', 'DELIVERY_AGENT', 'ADMIN']);
 
 export const createAdminUserSchema = z.object({
   firstName: z.string().min(2, 'Le prénom est trop court'),
@@ -676,18 +676,21 @@ export async function exportReportsCsv(
   return [headers, ...rows].map((row) => row.join(',')).join('\n');
 }
 
-export async function getUsersList(page: number = 1, limit: number = 20, search?: string) {
+export async function getUsersList(page: number = 1, limit: number = 20, search?: string, role?: z.infer<typeof userRoleSchema>) {
   const skip = (page - 1) * limit;
 
-  const where = search ? {
-    OR: [
-      { firstName: { contains: search, mode: 'insensitive' as const } },
-      { lastName: { contains: search, mode: 'insensitive' as const } },
-      { email: { contains: search, mode: 'insensitive' as const } },
-      { phone: { contains: search, mode: 'insensitive' as const } },
-      { referralCode: { contains: search, mode: 'insensitive' as const } },
-    ],
-  } : {};
+  const where: any = {
+    ...(role ? { role } : {}),
+    ...(search ? {
+      OR: [
+        { firstName: { contains: search, mode: 'insensitive' as const } },
+        { lastName: { contains: search, mode: 'insensitive' as const } },
+        { email: { contains: search, mode: 'insensitive' as const } },
+        { phone: { contains: search, mode: 'insensitive' as const } },
+        { referralCode: { contains: search, mode: 'insensitive' as const } },
+      ],
+    } : {}),
+  };
 
   const [users, total] = await Promise.all([
     prisma.user.findMany({

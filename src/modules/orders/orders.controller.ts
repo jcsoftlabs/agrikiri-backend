@@ -50,6 +50,21 @@ export async function updateOrderTracking(req: AuthRequest, res: Response, next:
   } catch (error) { next(error); }
 }
 
+export async function getMyDeliveryAssignments(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const orders = await ordersService.getDeliveryAgentOrders(req.user!.userId);
+    res.json({ success: true, data: orders });
+  } catch (error) { next(error); }
+}
+
+export async function updateMyDeliveryStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { status, note } = ordersService.deliveryAgentStatusSchema.parse(req.body);
+    const order = await ordersService.updateDeliveryAgentOrderStatus(req.params.id, req.user!.userId, status, note);
+    res.json({ success: true, message: 'Statut livraison mis à jour', data: order });
+  } catch (error) { next(error); }
+}
+
 export async function getAllOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit, status, paymentStatus } = req.query;
