@@ -21,7 +21,7 @@ export const refreshSchema = z.object({
 });
 
 export const customerAddressSchema = z.object({
-  label: z.string().trim().min(2, 'Libellé requis').max(60),
+  label: z.string().trim().max(60).optional().or(z.literal('')),
   countryCode: z.enum(['HT', 'US']),
   fullName: z.string().trim().min(2, 'Nom requis').max(120),
   phoneCountryCode: z.enum(['+509', '+1']),

@@ -27,6 +27,11 @@ const customerAddressSelect = {
   updatedAt: true,
 } as const;
 
+function resolveAddressLabel(rawLabel: string | undefined, fallback: string) {
+  const trimmed = rawLabel?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
 // ================================
 // REGISTER
 // ================================
@@ -185,6 +190,10 @@ export async function getMyAddresses(userId: string) {
 export async function createAddress(userId: string, data: CustomerAddressInput) {
   const existingCount = await prisma.customerAddress.count({ where: { userId } });
   const shouldBeDefault = data.isDefault ?? existingCount === 0;
+  const label = resolveAddressLabel(
+    data.label,
+    existingCount === 0 ? 'Adresse principale' : `Adresse ${existingCount + 1}`
+  );
 
   if (shouldBeDefault) {
     await ensureSingleDefaultAddress(userId);
@@ -194,6 +203,7 @@ export async function createAddress(userId: string, data: CustomerAddressInput) 
     data: {
       userId,
       ...data,
+      label,
       addressLine2: data.addressLine2 || null,
       postalCode: data.postalCode || null,
       deliveryInstructions: data.deliveryInstructions || null,
@@ -206,7 +216,7 @@ export async function createAddress(userId: string, data: CustomerAddressInput) 
 export async function updateAddress(userId: string, addressId: string, data: CustomerAddressInput) {
   const existing = await prisma.customerAddress.findFirst({
     where: { id: addressId, userId },
-    select: { id: true, userId: true },
+    select: { id: true, userId: true, label: true },
   });
 
   if (!existing) {
@@ -221,6 +231,7 @@ export async function updateAddress(userId: string, addressId: string, data: Cus
     where: { id: addressId },
     data: {
       ...data,
+      label: resolveAddressLabel(data.label, existing.label || 'Adresse'),
       addressLine2: data.addressLine2 || null,
       postalCode: data.postalCode || null,
       deliveryInstructions: data.deliveryInstructions || null,
