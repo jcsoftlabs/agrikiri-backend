@@ -16,6 +16,13 @@ enum Role {
   AYIZAN
   DELIVERY_AGENT
   ADMIN
+  ASSOCIATE
+}
+
+enum AssociateType {
+  PDG
+  VOTING
+  OBSERVER
 }
 
 enum MlmLevel {
@@ -84,6 +91,7 @@ model User {
   avatarUrl            String?
   avatarPublicId       String?
   role                 Role      @default(CUSTOMER)
+  associateType        AssociateType?
   mlmLevel             MlmLevel  @default(AYIZAN)
   sponsorId            String?
   sponsor              User?     @relation("SponsorDownline", fields: [sponsorId], references: [id])
@@ -104,9 +112,17 @@ model User {
   notifications        Notification[]
   addresses            CustomerAddress[]
   assignedDeliveries   Order[]         @relation("AssignedDeliveryAgent")
+  
+  // Relations Associés
+  createdDossiers      Dossier[]       @relation("DossierAuthor")
+  ballots              Ballot[]
+  sentMessages         InternalMessage[]
+  dossierComments      DossierComment[]
+
 
   @@index([sponsorId])
 }
+
 
 model CustomerAddress {
   id                   String   @id @default(uuid())
@@ -326,4 +342,87 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+// ================================
+// ASSOCIATES MODELS
+// ================================
+
+model Dossier {
+  id          String   @id @default(uuid())
+  title       String
+  description String
+  status      String   @default("OPEN") // OPEN, IN_PROGRESS, COMPLETED, ARCHIVED
+  authorId    String
+  author      User     @relation("DossierAuthor", fields: [authorId], references: [id])
+  documents   DossierDocument[]
+  votes       Vote[]
+  comments    DossierComment[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+
+  @@index([authorId])
+}
+
+model DossierDocument {
+  id        String   @id @default(uuid())
+  dossierId String
+  dossier   Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  name      String
+  url       String
+  createdAt DateTime @default(now())
+
+  @@index([dossierId])
+}
+
+model Vote {
+  id          String   @id @default(uuid())
+  dossierId   String?
+  dossier     Dossier? @relation(fields: [dossierId], references: [id])
+  title       String
+  description String?
+  isActive    Boolean  @default(true)
+  expiresAt   DateTime?
+  ballots     Ballot[]
+  createdAt   DateTime @default(now())
+
+  @@index([dossierId])
+}
+
+model Ballot {
+  id        String   @id @default(uuid())
+  voteId    String
+  vote      Vote     @relation(fields: [voteId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  choice    String   // FOR, AGAINST, ABSTAIN
+  createdAt DateTime @default(now())
+
+  @@unique([voteId, userId])
+  @@index([voteId])
+  @@index([userId])
+}
+
+model InternalMessage {
+  id        String   @id @default(uuid())
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([senderId])
+}
+
+model DossierComment {
+  id        String   @id @default(uuid())
+  dossierId String
+  dossier   Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([dossierId])
+  @@index([authorId])
 }

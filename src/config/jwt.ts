@@ -10,7 +10,9 @@ export interface JwtPayload {
   email: string;
   role: string;
   mlmLevel?: string;
+  associateType?: string;
 }
+
 
 export function generateAccessToken(payload: JwtPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions);

@@ -85,7 +85,9 @@ export async function registerUser(data: RegisterInput) {
     email: user.email,
     role: user.role,
     mlmLevel: user.mlmLevel,
+    associateType: (user as any).associateType,
   });
+
 
   const refreshToken = generateRefreshToken({ userId: user.id });
 
@@ -112,7 +114,9 @@ export async function loginUser(data: LoginInput) {
       avatarUrl: true,
       referralCode: true,
       isActive: true,
+      associateType: true,
     },
+
   });
 
   if (!user) throw createError('Email ou mot de passe incorrect', 401);
@@ -126,7 +130,9 @@ export async function loginUser(data: LoginInput) {
     email: user.email,
     role: user.role,
     mlmLevel: user.mlmLevel,
+    associateType: user.associateType || undefined,
   });
+
 
   const refreshToken = generateRefreshToken({ userId: user.id });
 
@@ -150,7 +156,8 @@ export async function refreshAccessToken(refreshToken: string) {
 
   const user = await prisma.user.findUnique({
     where: { id: decoded.userId },
-    select: { id: true, email: true, role: true, mlmLevel: true, isActive: true },
+    select: { id: true, email: true, role: true, mlmLevel: true, associateType: true, isActive: true },
+
   });
 
   if (!user || !user.isActive) throw createError('Utilisateur introuvable ou désactivé', 401);
@@ -160,7 +167,9 @@ export async function refreshAccessToken(refreshToken: string) {
     email: user.email,
     role: user.role,
     mlmLevel: user.mlmLevel,
+    associateType: user.associateType || undefined,
   });
+
 
   return { accessToken };
 }

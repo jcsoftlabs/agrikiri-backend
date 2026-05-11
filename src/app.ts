@@ -18,6 +18,8 @@ import ordersRoutes from './modules/orders/orders.routes';
 import mlmRoutes from './modules/mlm/mlm.routes';
 import commissionsRoutes from './modules/commissions/commissions.routes';
 import adminRoutes from './modules/admin/admin.routes';
+import associatesRoutes from './modules/associates/associates.routes';
+
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -95,6 +97,8 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/mlm', mlmRoutes);
 app.use('/api/commissions', commissionsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/associates', associatesRoutes);
+
 
 // ================================
 // 404 & ERROR HANDLING

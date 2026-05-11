@@ -62,3 +62,22 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
 
   next();
 }
+
+export function requireAssociate(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'ASSOCIATE' && req.user.role !== 'ADMIN')) {
+    res.status(403).json({ success: false, message: 'Accès réservé aux associés' });
+    return;
+  }
+
+  next();
+}
+
+export function requirePdg(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.associateType !== 'PDG' && req.user.role !== 'ADMIN')) {
+    res.status(403).json({ success: false, message: 'Accès réservé au PDG' });
+    return;
+  }
+
+  next();
+}
+
