@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import { uploadProductImages, uploadAvatar, uploadCategoryImage, deleteFile } from './upload.controller';
-import { authenticate, requireAdmin } from '../../middleware/auth.middleware';
+import { uploadProductImages, uploadAvatar, uploadCategoryImage, uploadDeliveryProof, deleteFile } from './upload.controller';
+import { authenticate, requireAdmin, requireRole } from '../../middleware/auth.middleware';
 import {
   uploadProductImages as productImagesMiddleware,
   uploadAvatar as avatarMiddleware,
   uploadCategoryImage as categoryImageMiddleware,
+  uploadDeliveryProof as deliveryProofMiddleware,
 } from '../../middleware/upload.middleware';
 
 const router = Router();
@@ -45,6 +46,19 @@ router.post(
     });
   },
   uploadCategoryImage
+);
+
+router.post(
+  '/delivery-proof',
+  authenticate,
+  requireRole('DELIVERY_AGENT', 'ADMIN'),
+  (req, res, next) => {
+    deliveryProofMiddleware(req, res, (err) => {
+      if (err) return next(err);
+      next();
+    });
+  },
+  uploadDeliveryProof
 );
 
 router.delete('/:publicId', authenticate, requireAdmin, deleteFile);

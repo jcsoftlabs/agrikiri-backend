@@ -59,8 +59,8 @@ export async function getMyDeliveryAssignments(req: AuthRequest, res: Response, 
 
 export async function updateMyDeliveryStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { status, note } = ordersService.deliveryAgentStatusSchema.parse(req.body);
-    const order = await ordersService.updateDeliveryAgentOrderStatus(req.params.id, req.user!.userId, status, note);
+    const data = ordersService.deliveryAgentStatusSchema.parse(req.body);
+    const order = await ordersService.updateDeliveryAgentOrderStatus(req.params.id, req.user!.userId, data.status, data);
     res.json({ success: true, message: 'Statut livraison mis à jour', data: order });
   } catch (error) { next(error); }
 }

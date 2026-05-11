@@ -60,6 +60,24 @@ export async function uploadCategoryImage(req: Request, res: Response, next: Nex
   }
 }
 
+export async function uploadDeliveryProof(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const file = req.file as any;
+    if (!file) {
+      res.status(400).json({ success: false, message: 'Aucune preuve fournie' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Preuve de livraison uploadée avec succès',
+      data: { url: file.path, publicId: file.filename },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 export async function deleteFile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { publicId } = req.params;

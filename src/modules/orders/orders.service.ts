@@ -55,6 +55,14 @@ export const updateOrderTrackingSchema = z.object({
 export const deliveryAgentStatusSchema = z.object({
   status: z.enum(['PROCESSING', 'SHIPPED', 'DELIVERED', 'DELIVERY_FAILED']),
   note: z.string().trim().max(300).optional(),
+  recipientName: z.string().trim().max(120).optional(),
+  proofPhotoUrl: z.string().trim().url().optional(),
+  proofPhotoPublicId: z.string().trim().max(255).optional(),
+  signatureUrl: z.string().trim().url().optional(),
+  signaturePublicId: z.string().trim().max(255).optional(),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  locationAccuracy: z.number().min(0).max(10000).optional(),
 });
 
 function isOnlinePaymentMethod(method: z.infer<typeof createOrderSchema>['paymentMethod']) {
@@ -166,6 +174,14 @@ function normalizeDateInput(value?: string) {
   if (!trimmed) return null;
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseDecimalOrNull(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(7) : null;
+}
+
+function parseAccuracyOrNull(value?: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : null;
 }
 
 // ================================
@@ -733,7 +749,7 @@ export async function getDeliveryAgentOrders(deliveryAgentId: string) {
   return prisma.order.findMany({
     where: {
       deliveryAgentId,
-      status: { in: ['PROCESSING', 'SHIPPED', 'DELIVERY_FAILED'] },
+      status: { in: ['PROCESSING', 'SHIPPED', 'DELIVERY_FAILED', 'DELIVERED'] },
     },
     orderBy: [
       { status: 'asc' },
@@ -751,7 +767,7 @@ export async function updateDeliveryAgentOrderStatus(
   orderId: string,
   deliveryAgentId: string,
   status: 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED',
-  note?: string
+  proof?: z.infer<typeof deliveryAgentStatusSchema>
 ) {
   const order = await prisma.order.findFirst({
     where: { id: orderId, deliveryAgentId },
@@ -762,14 +778,51 @@ export async function updateDeliveryAgentOrderStatus(
 
   if (!order) throw createError('Commande introuvable pour ce livreur', 404);
 
+  if (status === 'DELIVERED') {
+    if (!proof?.recipientName?.trim()) {
+      throw createError('Le nom du destinataire est requis pour confirmer la livraison', 400);
+    }
+
+    if (!proof?.proofPhotoUrl || !proof?.proofPhotoPublicId) {
+      throw createError('La photo de preuve de livraison est requise', 400);
+    }
+
+    if (!proof?.signatureUrl || !proof?.signaturePublicId) {
+      throw createError('La signature du destinataire est requise', 400);
+    }
+
+    if (typeof proof.latitude !== 'number' || typeof proof.longitude !== 'number') {
+      throw createError('La géolocalisation de la livraison est requise', 400);
+    }
+  }
+
+  const deliveredLatitude = parseDecimalOrNull(proof?.latitude);
+  const deliveredLongitude = parseDecimalOrNull(proof?.longitude);
+  const deliveredLocationAccuracy = parseAccuracyOrNull(proof?.locationAccuracy);
+
   const updated = await prisma.order.update({
     where: { id: orderId },
     data: {
       status,
       shippedAt: status === 'SHIPPED' && !order.shippedAt ? new Date() : order.shippedAt,
       deliveredAt: status === 'DELIVERED' && !order.deliveredAt ? new Date() : status === 'DELIVERY_FAILED' ? null : order.deliveredAt,
+      deliveryRecipientName: status === 'DELIVERED' ? proof?.recipientName?.trim() || null : order.deliveryRecipientName,
+      deliveryProofNote: status === 'DELIVERED' ? proof?.note?.trim() || null : status === 'DELIVERY_FAILED' ? proof?.note?.trim() || null : order.deliveryProofNote,
+      deliveryProofPhotoUrl: status === 'DELIVERED' ? proof?.proofPhotoUrl || null : order.deliveryProofPhotoUrl,
+      deliveryProofPhotoPublicId: status === 'DELIVERED' ? proof?.proofPhotoPublicId || null : order.deliveryProofPhotoPublicId,
+      deliverySignatureUrl: status === 'DELIVERED' ? proof?.signatureUrl || null : order.deliverySignatureUrl,
+      deliverySignaturePublicId: status === 'DELIVERED' ? proof?.signaturePublicId || null : order.deliverySignaturePublicId,
+      deliveredLatitude: status === 'DELIVERED' ? deliveredLatitude : order.deliveredLatitude,
+      deliveredLongitude: status === 'DELIVERED' ? deliveredLongitude : order.deliveredLongitude,
+      deliveredLocationAccuracy: status === 'DELIVERED' ? deliveredLocationAccuracy : order.deliveredLocationAccuracy,
+      deliveryProofCapturedAt: status === 'DELIVERED' ? new Date() : order.deliveryProofCapturedAt,
     },
   });
+
+  const deliveredDescription =
+    status === 'DELIVERED'
+      ? `Destinataire : ${proof?.recipientName?.trim()}.${proof?.note?.trim() ? ` ${proof.note.trim()}` : ''}${proof?.locationAccuracy ? ` Position capturée (précision ${Math.round(proof.locationAccuracy)} m).` : ' Position de livraison capturée.'}`
+      : undefined;
 
   await createTrackingEvent(
     prisma,
@@ -781,7 +834,7 @@ export async function updateDeliveryAgentOrderStatus(
         : status === 'DELIVERY_FAILED'
           ? 'Échec de livraison'
           : 'Commande prise en charge',
-      note?.trim() || (
+      (status === 'DELIVERED' ? deliveredDescription : proof?.note?.trim()) || (
         status === 'SHIPPED'
           ? 'Le livreur AGRIKIRI est en route.'
           : status === 'DELIVERED'

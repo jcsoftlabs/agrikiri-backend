@@ -221,6 +221,16 @@ model Order {
   estimatedDeliveryDate DateTime?
   shippedAt       DateTime?
   deliveredAt     DateTime?
+  deliveryRecipientName String?
+  deliveryProofNote String?
+  deliveryProofPhotoUrl String?
+  deliveryProofPhotoPublicId String?
+  deliverySignatureUrl String?
+  deliverySignaturePublicId String?
+  deliveredLatitude Decimal? @db.Decimal(10, 7)
+  deliveredLongitude Decimal? @db.Decimal(10, 7)
+  deliveredLocationAccuracy Decimal? @db.Decimal(10, 2)
+  deliveryProofCapturedAt DateTime?
   items           OrderItem[]
   commissions     Commission[]
   trackingEvents  OrderTrackingEvent[]
