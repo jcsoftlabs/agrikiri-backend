@@ -254,6 +254,7 @@ export async function createOrder(
       quantity: item.quantity,
       unitPrice,
       vpPoints: unitVP,
+      productName: product.name,
     });
   }
 
@@ -333,7 +334,7 @@ export async function createOrder(
         // Alerte stock faible
         if (updatedVariant.stockQuantity <= 5) {
           void sendLowStockAlert({
-            productName: product.name,
+            productName: item.productName,
             variantLabel: updatedVariant.label,
             remainingStock: updatedVariant.stockQuantity,
           });
@@ -368,7 +369,7 @@ export async function createOrder(
         // Alerte stock faible
         if (updatedProduct.stockQuantity <= 5) {
           void sendLowStockAlert({
-            productName: product.name,
+            productName: item.productName,
             remainingStock: updatedProduct.stockQuantity,
           });
         }
