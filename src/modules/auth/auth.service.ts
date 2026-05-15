@@ -4,7 +4,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { RegisterInput, LoginInput, CustomerAddressInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 import { generateReferralCode } from '../../utils/mlm-calculator';
 import { createError } from '../../middleware/error.middleware';
-import { sendAyizanWelcomeEmail, sendPasswordResetEmail } from '../../services/email.service';
+import { sendAyizanWelcomeEmail, sendPasswordResetEmail, sendWelcomeEmail } from '../../services/email.service';
 
 const SALT_ROUNDS = 12;
 const MINIMUM_PURCHASE_HTG = 9500;
@@ -90,6 +90,12 @@ export async function registerUser(data: RegisterInput) {
 
 
   const refreshToken = generateRefreshToken({ userId: user.id });
+  
+  // Email de bienvenue
+  void sendWelcomeEmail({
+    to: user.email,
+    firstName: user.firstName,
+  });
 
   return { user, accessToken, refreshToken };
 }

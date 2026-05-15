@@ -5,6 +5,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || '';
 const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO || '';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
+const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
 
 interface SendEmailInput {
   to: EmailRecipient;
@@ -49,11 +50,11 @@ function wrapEmail(title: string, intro: string, body: string, ctaLabel?: string
 
   return `
     <div style="background:#f7f4ec;padding:32px 16px;font-family:Arial,sans-serif;color:#1f2937;">
-      <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e7e5df;">
-        <div style="background:linear-gradient(135deg,#183222 0%,#4b8440 100%);padding:28px 32px;color:#ffffff;">
-          <div style="font-size:12px;letter-spacing:0.28em;text-transform:uppercase;opacity:0.8;margin-bottom:10px;">AGRIKIRI</div>
-          <h1 style="margin:0;font-size:30px;line-height:1.15;">${escapeHtml(title)}</h1>
-          <p style="margin:12px 0 0;font-size:16px;line-height:1.7;opacity:0.92;">${escapeHtml(intro)}</p>
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e7e5df;box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+        <div style="background:linear-gradient(135deg,#183222 0%,#4b8440 100%);padding:32px;color:#ffffff;text-align:center;">
+          <img src="${LOGO_URL}" alt="AGRIKIRI" style="height:48px;margin-bottom:20px;display:inline-block;" />
+          <h1 style="margin:0;font-size:28px;line-height:1.2;font-weight:700;">${escapeHtml(title)}</h1>
+          <p style="margin:12px 0 0;font-size:16px;line-height:1.6;opacity:0.9;">${escapeHtml(intro)}</p>
         </div>
         <div style="padding:32px;">
           ${body}
@@ -412,4 +413,38 @@ export async function sendLowStockAlert(params: {
 
   const adminEmails = process.env.ADMIN_NOTIF_EMAILS || RESEND_FROM_EMAIL;
   await safeSendEmail({ to: adminEmails, subject, html, text });
+}
+
+export async function sendWelcomeEmail(params: {
+  to: string;
+  firstName: string;
+}) {
+  const shopUrl = `${FRONTEND_URL}/shop`;
+  const subject = 'Bienvenue chez AGRIKIRI ! 🌿';
+  const intro = `Bonjour ${params.firstName}, nous sommes ravis de vous compter parmi nous.`;
+  const html = wrapEmail(
+    'Bienvenue !',
+    intro,
+    `
+      <p style="margin:0;color:#4b5563;line-height:1.7;">
+        Votre compte a été créé avec succès. Vous pouvez dès maintenant explorer notre boutique et découvrir le meilleur des produits locaux haïtiens.
+      </p>
+      <div style="margin-top:24px;padding:20px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;color:#374151;">
+        <strong>Pourquoi AGRIKIRI ?</strong><br />
+        Nous travaillons directement avec les producteurs locaux pour vous offrir des produits frais, authentiques et de qualité supérieure.
+      </div>
+    `,
+    'Découvrir la boutique',
+    shopUrl
+  );
+
+  const text = [
+    `Bonjour ${params.firstName},`,
+    'Bienvenue chez AGRIKIRI !',
+    'Votre compte a été créé avec succès.',
+    '',
+    `Découvrez nos produits : ${shopUrl}`,
+  ].join('\n');
+
+  await safeSendEmail({ to: params.to, subject, html, text });
 }
