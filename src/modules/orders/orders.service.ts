@@ -184,6 +184,47 @@ function parseAccuracyOrNull(value?: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : null;
 }
 
+function normalizeZoneText(value?: string | null) {
+  return (value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function isFreeDeliveryZone(city: string, stateRegion: string) {
+  const cityText = normalizeZoneText(city);
+  const regionText = normalizeZoneText(stateRegion);
+
+  if (regionText !== 'ouest') {
+    return false;
+  }
+
+  return (
+    cityText.includes('delmas') ||
+    cityText.includes('canape-vert') ||
+    cityText.includes('canape vert') ||
+    cityText.includes('petion-ville') ||
+    cityText.includes('petion ville') ||
+    cityText === 'pv'
+  );
+}
+
+function calculateDeliveryFee(subtotalAmount: number, deliveryAddress: z.infer<typeof createOrderSchema>['deliveryAddress']) {
+  if (deliveryAddress.countryCode !== 'HT') {
+    return 0;
+  }
+
+  const qualifiesForFreeDelivery =
+    subtotalAmount > 3000 && isFreeDeliveryZone(deliveryAddress.city, deliveryAddress.stateRegion);
+
+  if (qualifiesForFreeDelivery) {
+    return 0;
+  }
+
+  return Number((subtotalAmount * 0.1).toFixed(2));
+}
+
 // ================================
 // CREATE ORDER
 // ================================
@@ -198,7 +239,7 @@ export async function createOrder(
   const defaultDeliveryZone = [deliveryAddress.city, deliveryAddress.stateRegion].filter(Boolean).join(', ');
 
   // Récupérer les produits et calculer les totaux
-  let totalAmount = 0;
+  let subtotalAmount = 0;
   let totalVP = 0;
   const orderItems: any[] = [];
 
@@ -245,7 +286,7 @@ export async function createOrder(
     const itemTotal = Number(unitPrice) * item.quantity;
     const itemVP = Number(unitVP) * item.quantity;
 
-    totalAmount += itemTotal;
+    subtotalAmount += itemTotal;
     totalVP += itemVP;
 
     orderItems.push({
@@ -267,6 +308,8 @@ export async function createOrder(
   }
 
   const orderNumber = generateOrderNumber();
+  const deliveryFee = calculateDeliveryFee(subtotalAmount, deliveryAddress);
+  const totalAmount = subtotalAmount + deliveryFee;
   let paymentSession: { paymentUrl: string; transactionId: string | null } | null = null;
 
   if (isOnlinePaymentMethod(paymentMethod)) {
@@ -291,6 +334,8 @@ export async function createOrder(
         orderNumber,
         customerId,
         ayizanId,
+        subtotalAmount,
+        deliveryFee,
         totalAmount,
         totalVP,
         deliveryAddress,
@@ -393,13 +438,19 @@ export async function createOrder(
     to: order.customer.email,
     customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
     orderNumber,
+    subtotalAmount,
+    deliveryFee,
     totalAmount,
     paymentMethod: getPaymentMethodLabel(paymentMethod),
+    deliveryModeLabel: getDeliveryModeLabel(deliveryMode),
+    deliveryZone: defaultDeliveryZone || null,
     items: order.items.map((item: any) => ({
       name: item.product.name,
       quantity: item.quantity,
       variantLabel: item.productVariant?.label || null,
+      lineTotal: Number(item.unitPrice) * item.quantity,
     })),
+    deliveryAddress,
   });
 
   // Notification Admin
@@ -472,7 +523,12 @@ export async function markOrderPaid(orderId: string) {
     to: order.customer.email,
     customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
     orderNumber: order.orderNumber,
+    subtotalAmount: Number(order.subtotalAmount ?? order.totalAmount),
+    deliveryFee: Number(order.deliveryFee ?? 0),
     totalAmount: Number(order.totalAmount),
+    paymentMethod: getPaymentMethodLabel(order.paymentMethod as z.infer<typeof createOrderSchema>['paymentMethod']),
+    deliveryModeLabel: getDeliveryModeLabel(order.deliveryMode as 'INTERNAL' | 'EXTERNAL'),
+    deliveryZone: order.deliveryZone || null,
   });
 
   return order;
@@ -624,7 +680,12 @@ export async function updateOrderStatus(
       to: order.customer.email,
       customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
       orderNumber: order.orderNumber,
+      subtotalAmount: Number(updated.subtotalAmount ?? updated.totalAmount),
+      deliveryFee: Number(updated.deliveryFee ?? 0),
       totalAmount: Number(updated.totalAmount),
+      paymentMethod: getPaymentMethodLabel(updated.paymentMethod as z.infer<typeof createOrderSchema>['paymentMethod']),
+      deliveryModeLabel: getDeliveryModeLabel(updated.deliveryMode as 'INTERNAL' | 'EXTERNAL'),
+      deliveryZone: updated.deliveryZone || null,
     });
   }
 
@@ -670,6 +731,9 @@ export async function updateOrderStatus(
         customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
         orderNumber: order.orderNumber,
         statusLabel: statusMessages[status],
+        deliveryModeLabel: getDeliveryModeLabel((updated.deliveryMode ?? order.deliveryMode) as 'INTERNAL' | 'EXTERNAL'),
+        deliveryZone: updated.deliveryZone || order.deliveryZone || null,
+        trackingNumber: updated.trackingNumber || null,
       });
     }
   }

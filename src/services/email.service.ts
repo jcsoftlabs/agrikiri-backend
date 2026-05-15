@@ -18,6 +18,32 @@ interface OrderEmailLine {
   name: string;
   quantity: number;
   variantLabel?: string | null;
+  unitPrice?: number;
+  lineTotal?: number;
+}
+
+interface OrderEmailSummary {
+  orderNumber: string;
+  subtotalAmount?: number;
+  deliveryFee?: number;
+  totalAmount: number;
+  paymentMethod?: string;
+  deliveryModeLabel?: string;
+  deliveryZone?: string | null;
+  customerName?: string;
+  detailUrl?: string;
+}
+
+interface OrderEmailAddress {
+  fullName: string;
+  phoneCountryCode?: string;
+  phoneNumber?: string;
+  addressLine1: string;
+  addressLine2?: string | null;
+  city: string;
+  stateRegion: string;
+  postalCode?: string | null;
+  countryCode: string;
 }
 
 function isEmailConfigured() {
@@ -112,6 +138,7 @@ function renderOrderLines(lines: OrderEmailLine[]) {
       return `
         <li style="margin:0 0 10px 0;color:#374151;">
           <strong>${escapeHtml(label)}</strong> x ${line.quantity}
+          ${typeof line.lineTotal === 'number' ? `<span style="color:#6b7280;"> — ${escapeHtml(formatCurrency(line.lineTotal))}</span>` : ''}
         </li>
       `;
     })
@@ -120,15 +147,96 @@ function renderOrderLines(lines: OrderEmailLine[]) {
   return `<ul style="padding-left:18px;margin:18px 0;">${itemsHtml}</ul>`;
 }
 
+function renderMoneyBreakdown(summary: OrderEmailSummary) {
+  const subtotal = typeof summary.subtotalAmount === 'number' ? summary.subtotalAmount : summary.totalAmount;
+  const deliveryFee = typeof summary.deliveryFee === 'number' ? summary.deliveryFee : 0;
+
+  return `
+    <div style="margin-top:20px;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
+      <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#6b7280;margin-bottom:14px;">Récapitulatif</div>
+      <table role="presentation" width="100%" style="border-collapse:collapse;font-size:14px;color:#374151;">
+        <tr>
+          <td style="padding:6px 0;">Sous-total</td>
+          <td style="padding:6px 0;text-align:right;font-weight:600;">${escapeHtml(formatCurrency(subtotal))}</td>
+        </tr>
+        <tr>
+          <td style="padding:6px 0;">Livraison</td>
+          <td style="padding:6px 0;text-align:right;font-weight:600;">${escapeHtml(formatCurrency(deliveryFee))}</td>
+        </tr>
+        <tr>
+          <td style="padding:12px 0 0;border-top:1px solid #e5e7eb;font-size:15px;font-weight:700;color:#111827;">Total</td>
+          <td style="padding:12px 0 0;border-top:1px solid #e5e7eb;text-align:right;font-size:15px;font-weight:700;color:#183222;">
+            ${escapeHtml(formatCurrency(summary.totalAmount))}
+          </td>
+        </tr>
+      </table>
+    </div>
+  `;
+}
+
+function renderOrderMeta(summary: OrderEmailSummary) {
+  const rows = [
+    ['Référence', summary.orderNumber],
+    ['Paiement', summary.paymentMethod || 'Non précisé'],
+    ['Livraison', summary.deliveryModeLabel || 'Non précisée'],
+    ['Zone', summary.deliveryZone || 'Non précisée'],
+  ]
+    .filter(([, value]) => Boolean(value))
+    .map(
+      ([label, value]) => `
+        <tr>
+          <td style="padding:6px 0;color:#6b7280;">${escapeHtml(label)}</td>
+          <td style="padding:6px 0;text-align:right;font-weight:600;color:#111827;">${escapeHtml(value as string)}</td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div style="padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;font-size:14px;">
+        ${rows}
+      </table>
+    </div>
+  `;
+}
+
+function renderAddressBlock(address?: OrderEmailAddress) {
+  if (!address) return '';
+
+  const lines = [
+    address.fullName,
+    address.phoneCountryCode && address.phoneNumber ? `${address.phoneCountryCode} ${address.phoneNumber}` : '',
+    address.addressLine1,
+    address.addressLine2 || '',
+    `${address.city}, ${address.stateRegion}`,
+    address.postalCode || '',
+    address.countryCode,
+  ].filter(Boolean);
+
+  return `
+    <div style="margin-top:20px;padding:18px;border-radius:18px;background:#fffdf6;border:1px solid #efe5bf;">
+      <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#8a7b38;margin-bottom:10px;">Adresse de livraison</div>
+      <div style="color:#374151;line-height:1.7;">${lines.map((line) => escapeHtml(line)).join('<br />')}</div>
+    </div>
+  `;
+}
+
 export async function sendOrderCreatedEmail(params: {
   to: string;
   customerName: string;
   orderNumber: string;
+  subtotalAmount?: number;
+  deliveryFee?: number;
   totalAmount: number;
   paymentMethod: string;
+  deliveryModeLabel?: string;
+  deliveryZone?: string | null;
   items: OrderEmailLine[];
+  deliveryAddress?: OrderEmailAddress;
 }) {
   const orderUrl = `${FRONTEND_URL}/orders`;
+  const detailUrl = `${FRONTEND_URL}/orders`;
   const subject = `Commande ${params.orderNumber} créée avec succès`;
   const intro = `Bonjour ${params.customerName}, votre commande a bien été enregistrée sur AGRIKIRI.`;
   const html = wrapEmail(
@@ -136,14 +244,29 @@ export async function sendOrderCreatedEmail(params: {
     intro,
     `
       <p style="margin:0 0 16px;color:#4b5563;line-height:1.7;">
-        Référence de commande : <strong>${escapeHtml(params.orderNumber)}</strong><br />
-        Montant total : <strong>${escapeHtml(formatCurrency(params.totalAmount))}</strong><br />
-        Moyen de paiement : <strong>${escapeHtml(params.paymentMethod)}</strong>
+        Nous avons bien reçu votre commande. Vous pourrez suivre sa préparation, votre paiement et la livraison depuis votre espace commandes.
       </p>
-      <div style="padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;">
+      ${renderOrderMeta({
+        orderNumber: params.orderNumber,
+        subtotalAmount: params.subtotalAmount,
+        deliveryFee: params.deliveryFee,
+        totalAmount: params.totalAmount,
+        paymentMethod: params.paymentMethod,
+        deliveryModeLabel: params.deliveryModeLabel,
+        deliveryZone: params.deliveryZone,
+        detailUrl,
+      })}
+      ${renderMoneyBreakdown({
+        orderNumber: params.orderNumber,
+        subtotalAmount: params.subtotalAmount,
+        deliveryFee: params.deliveryFee,
+        totalAmount: params.totalAmount,
+      })}
+      <div style="margin-top:20px;padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;">
         <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#6b7280;margin-bottom:10px;">Produits</div>
         ${renderOrderLines(params.items)}
       </div>
+      ${renderAddressBlock(params.deliveryAddress)}
     `,
     'Suivre ma commande',
     orderUrl
@@ -152,8 +275,12 @@ export async function sendOrderCreatedEmail(params: {
   const text = [
     `Bonjour ${params.customerName},`,
     `Votre commande ${params.orderNumber} a bien été créée.`,
+    `Sous-total : ${formatCurrency(params.subtotalAmount ?? params.totalAmount)}`,
+    `Livraison : ${formatCurrency(params.deliveryFee ?? 0)}`,
     `Montant total : ${formatCurrency(params.totalAmount)}`,
     `Moyen de paiement : ${params.paymentMethod}`,
+    params.deliveryModeLabel ? `Mode de livraison : ${params.deliveryModeLabel}` : '',
+    params.deliveryZone ? `Zone : ${params.deliveryZone}` : '',
     '',
     'Vous pouvez suivre votre commande ici :',
     orderUrl,
@@ -166,7 +293,12 @@ export async function sendOrderPaidEmail(params: {
   to: string;
   customerName: string;
   orderNumber: string;
+  subtotalAmount?: number;
+  deliveryFee?: number;
   totalAmount: number;
+  paymentMethod?: string;
+  deliveryModeLabel?: string;
+  deliveryZone?: string | null;
 }) {
   const orderUrl = `${FRONTEND_URL}/orders`;
   const subject = `Paiement confirmé pour ${params.orderNumber}`;
@@ -176,11 +308,25 @@ export async function sendOrderPaidEmail(params: {
     intro,
     `
       <p style="margin:0;color:#4b5563;line-height:1.7;">
-        Référence de commande : <strong>${escapeHtml(params.orderNumber)}</strong><br />
-        Montant confirmé : <strong>${escapeHtml(formatCurrency(params.totalAmount))}</strong>
+        Votre paiement a été validé. Notre équipe peut maintenant préparer votre commande et organiser la livraison.
       </p>
+      ${renderOrderMeta({
+        orderNumber: params.orderNumber,
+        subtotalAmount: params.subtotalAmount,
+        deliveryFee: params.deliveryFee,
+        totalAmount: params.totalAmount,
+        paymentMethod: params.paymentMethod,
+        deliveryModeLabel: params.deliveryModeLabel,
+        deliveryZone: params.deliveryZone,
+      })}
+      ${renderMoneyBreakdown({
+        orderNumber: params.orderNumber,
+        subtotalAmount: params.subtotalAmount,
+        deliveryFee: params.deliveryFee,
+        totalAmount: params.totalAmount,
+      })}
       <div style="margin-top:20px;padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;color:#374151;line-height:1.7;">
-        Votre commande est maintenant en préparation. Vous pourrez suivre son évolution depuis votre espace commandes.
+        Votre commande est maintenant en préparation. Vous retrouverez également votre facture depuis l’espace commandes.
       </div>
     `,
     'Voir mes commandes',
@@ -189,7 +335,10 @@ export async function sendOrderPaidEmail(params: {
   const text = [
     `Bonjour ${params.customerName},`,
     `Le paiement de votre commande ${params.orderNumber} a été confirmé.`,
+    `Sous-total : ${formatCurrency(params.subtotalAmount ?? params.totalAmount)}`,
+    `Livraison : ${formatCurrency(params.deliveryFee ?? 0)}`,
     `Montant confirmé : ${formatCurrency(params.totalAmount)}`,
+    params.paymentMethod ? `Moyen de paiement : ${params.paymentMethod}` : '',
     '',
     `Suivi : ${orderUrl}`,
   ].join('\n');
@@ -202,6 +351,9 @@ export async function sendOrderStatusEmail(params: {
   customerName: string;
   orderNumber: string;
   statusLabel: string;
+  deliveryModeLabel?: string;
+  deliveryZone?: string | null;
+  trackingNumber?: string | null;
 }) {
   const orderUrl = `${FRONTEND_URL}/orders`;
   const subject = `Mise à jour de votre commande ${params.orderNumber}`;
@@ -210,10 +362,17 @@ export async function sendOrderStatusEmail(params: {
     'Mise à jour de commande',
     intro,
     `
-      <p style="margin:0;color:#4b5563;line-height:1.7;">
-        Commande : <strong>${escapeHtml(params.orderNumber)}</strong><br />
-        Nouveau statut : <strong>${escapeHtml(params.statusLabel)}</strong>
-      </p>
+      ${renderOrderMeta({
+        orderNumber: params.orderNumber,
+        totalAmount: 0,
+        deliveryModeLabel: params.deliveryModeLabel,
+        deliveryZone: params.deliveryZone,
+      })}
+      <div style="margin-top:20px;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
+        <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#6b7280;margin-bottom:10px;">Nouveau statut</div>
+        <div style="font-size:20px;font-weight:700;color:#183222;">${escapeHtml(params.statusLabel)}</div>
+        ${params.trackingNumber ? `<div style="margin-top:10px;color:#4b5563;">Référence de suivi : <strong>${escapeHtml(params.trackingNumber)}</strong></div>` : ''}
+      </div>
     `,
     'Consulter la commande',
     orderUrl
@@ -221,6 +380,9 @@ export async function sendOrderStatusEmail(params: {
   const text = [
     `Bonjour ${params.customerName},`,
     `Le statut de votre commande ${params.orderNumber} est maintenant : ${params.statusLabel}.`,
+    params.deliveryModeLabel ? `Mode de livraison : ${params.deliveryModeLabel}` : '',
+    params.deliveryZone ? `Zone : ${params.deliveryZone}` : '',
+    params.trackingNumber ? `Suivi : ${params.trackingNumber}` : '',
     `Consultez votre suivi : ${orderUrl}`,
   ].join('\n');
 

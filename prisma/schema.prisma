@@ -223,6 +223,8 @@ model Order {
   ayizanId        String?
   ayizan          User?         @relation("AyizanOrders", fields: [ayizanId], references: [id])
   status          OrderStatus   @default(PENDING)
+  subtotalAmount  Decimal       @db.Decimal(10, 2)
+  deliveryFee     Decimal       @default(0) @db.Decimal(10, 2)
   totalAmount     Decimal       @db.Decimal(10, 2)
   totalVP         Decimal       @db.Decimal(10, 2)
   deliveryAddress Json
