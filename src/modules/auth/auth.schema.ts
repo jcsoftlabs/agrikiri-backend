@@ -35,6 +35,18 @@ export const customerAddressSchema = z.object({
   isDefault: z.boolean().optional(),
 });
 
+export const forgotPasswordSchema = z.object({
+  email: z.string().email('Email invalide'),
+});
+
+export const resetPasswordSchema = z.object({
+  email: z.string().email('Email invalide'),
+  code: z.string().length(6, 'Le code doit contenir 6 chiffres'),
+  newPassword: z.string().min(8, 'Le nouveau mot de passe doit contenir au moins 8 caractères'),
+});
+
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CustomerAddressInput = z.infer<typeof customerAddressSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;

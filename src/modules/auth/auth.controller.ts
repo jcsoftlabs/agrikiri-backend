@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { registerSchema, loginSchema, refreshSchema, customerAddressSchema } from './auth.schema';
+import { registerSchema, loginSchema, refreshSchema, customerAddressSchema, forgotPasswordSchema, resetPasswordSchema } from './auth.schema';
 import * as authService from './auth.service';
 import { AuthRequest } from '../../middleware/auth.middleware';
 
@@ -139,6 +139,32 @@ export async function deleteAddress(req: AuthRequest, res: Response, next: NextF
   try {
     await authService.deleteAddress(req.user!.userId, req.params.id);
     res.status(200).json({ success: true, message: 'Adresse supprimée' });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function forgotPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { email } = forgotPasswordSchema.parse(req.body);
+    await authService.forgotPassword(email);
+    res.status(200).json({
+      success: true,
+      message: 'Si un compte existe avec cet email, un code de réinitialisation a été envoyé.',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function resetPassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const data = resetPasswordSchema.parse(req.body);
+    await authService.resetPassword(data);
+    res.status(200).json({
+      success: true,
+      message: 'Votre mot de passe a été réinitialisé avec succès.',
+    });
   } catch (error) {
     next(error);
   }

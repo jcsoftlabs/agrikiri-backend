@@ -100,6 +100,8 @@ model User {
   monthsAtCurrentLevel Int       @default(0)
   personalVolume       Decimal   @default(0) @db.Decimal(10, 2)
   referralCode         String?   @unique
+  passwordResetCode    String?
+  passwordResetExpires DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 

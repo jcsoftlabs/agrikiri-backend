@@ -257,3 +257,159 @@ export async function sendAyizanWelcomeEmail(params: {
 
   await safeSendEmail({ to: params.to, subject, html, text });
 }
+
+export async function sendOrderShippedEmail(params: {
+  to: string;
+  customerName: string;
+  orderNumber: string;
+  carrierName?: string | null;
+  trackingNumber?: string | null;
+  estimatedDeliveryDate?: string | null;
+}) {
+  const orderUrl = `${FRONTEND_URL}/orders`;
+  const subject = `Votre commande ${params.orderNumber} est en route !`;
+  const intro = `Bonne nouvelle ${params.customerName} ! Votre colis vient d'être remis au transporteur.`;
+  
+  const deliveryInfo = `
+    <div style="margin-top:20px;padding:20px;border-radius:18px;background:#f0f7ff;border:1px solid #d1e9ff;color:#1e40af;line-height:1.6;">
+      <h3 style="margin-top:0;font-size:16px;">Informations de livraison</h3>
+      <p style="margin:5px 0;">Transporteur : <strong>${escapeHtml(params.carrierName || 'Livraison AGRIKIRI')}</strong></p>
+      ${params.trackingNumber ? `<p style="margin:5px 0;">Numéro de suivi : <strong>${escapeHtml(params.trackingNumber)}</strong></p>` : ''}
+      ${params.estimatedDeliveryDate ? `<p style="margin:5px 0;">Livraison estimée : <strong>${escapeHtml(params.estimatedDeliveryDate)}</strong></p>` : ''}
+    </div>
+  `;
+
+  const html = wrapEmail(
+    'Colis en route',
+    intro,
+    `
+      <p style="margin:0;color:#4b5563;line-height:1.7;">
+        Votre commande est officiellement en cours de livraison. Vous pouvez suivre son avancement en temps réel sur votre tableau de bord.
+      </p>
+      ${deliveryInfo}
+    `,
+    'Suivre mon colis',
+    orderUrl
+  );
+
+  const text = [
+    `Bonjour ${params.customerName},`,
+    `Votre commande ${params.orderNumber} est en route !`,
+    `Transporteur : ${params.carrierName || 'Livraison AGRIKIRI'}`,
+    params.trackingNumber ? `Suivi : ${params.trackingNumber}` : '',
+    params.estimatedDeliveryDate ? `Date estimée : ${params.estimatedDeliveryDate}` : '',
+    '',
+    `Suivez votre commande ici : ${orderUrl}`,
+  ].join('\n');
+
+  await safeSendEmail({ to: params.to, subject, html, text });
+}
+
+export async function sendPasswordResetEmail(params: {
+  to: string;
+  firstName: string;
+  code: string;
+}) {
+  const subject = 'Votre code de réinitialisation AGRIKIRI';
+  const intro = `Bonjour ${params.firstName}, voici votre code pour réinitialiser votre mot de passe.`;
+  const html = wrapEmail(
+    'Mot de passe oublié ?',
+    intro,
+    `
+      <p style="margin:0;color:#4b5563;line-height:1.7;">
+        Utilisez le code de sécurité ci-dessous pour valider la réinitialisation de votre compte. Ce code est valable pendant 15 minutes.
+      </p>
+      <div style="margin:32px 0;padding:24px;background:#f9fafb;border-radius:16px;text-align:center;border:1px dashed #d1d5db;">
+        <span style="font-family:monospace;font-size:36px;font-weight:bold;letter-spacing:10px;color:#183222;">${params.code}</span>
+      </div>
+      <p style="font-size:13px;color:#9ca3af;margin-top:20px;">
+        Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet email. Votre mot de passe restera inchangé.
+      </p>
+    `,
+    'Aller sur le site',
+    FRONTEND_URL
+  );
+
+  const text = [
+    `Bonjour ${params.firstName},`,
+    `Votre code de réinitialisation est : ${params.code}`,
+    '',
+    'Ce code est valable 15 minutes.',
+    'Si vous n\'avez pas fait cette demande, ignorez cet email.',
+  ].join('\n');
+
+  await safeSendEmail({ to: params.to, subject, html, text });
+}
+
+export async function sendAdminOrderNotification(params: {
+  orderNumber: string;
+  totalAmount: number;
+  customerName: string;
+  itemsCount: number;
+}) {
+  const adminUrl = `${FRONTEND_URL}/admin/orders`;
+  const subject = `🔔 Nouvelle commande : ${params.orderNumber}`;
+  const intro = `Une nouvelle commande vient d'être passée par ${params.customerName}.`;
+  
+  const html = wrapEmail(
+    'Nouvelle commande reçue',
+    intro,
+    `
+      <div style="padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
+        <p style="margin:5px 0;">Commande : <strong>${params.orderNumber}</strong></p>
+        <p style="margin:5px 0;">Montant : <strong>${formatCurrency(params.totalAmount)}</strong></p>
+        <p style="margin:5px 0;">Nombre d'articles : <strong>${params.itemsCount}</strong></p>
+      </div>
+      <p style="margin-top:20px;color:#4b5563;">
+        Veuillez vous connecter à l'interface d'administration pour traiter cette commande.
+      </p>
+    `,
+    'Gérer la commande',
+    adminUrl
+  );
+
+  const text = [
+    `Nouvelle commande reçue : ${params.orderNumber}`,
+    `Client : ${params.customerName}`,
+    `Montant : ${formatCurrency(params.totalAmount)}`,
+    `Lien admin : ${adminUrl}`,
+  ].join('\n');
+
+  const adminEmails = process.env.ADMIN_NOTIF_EMAILS || RESEND_FROM_EMAIL;
+  await safeSendEmail({ to: adminEmails, subject, html, text });
+}
+
+export async function sendLowStockAlert(params: {
+  productName: string;
+  variantLabel?: string;
+  remainingStock: number;
+}) {
+  const adminUrl = `${FRONTEND_URL}/admin/products`;
+  const subject = `⚠️ Alerte Stock Faible : ${params.productName}`;
+  const itemLabel = params.variantLabel ? `${params.productName} (${params.variantLabel})` : params.productName;
+  
+  const html = wrapEmail(
+    'Alerte de Stock',
+    `Attention, le stock de "${itemLabel}" est presque épuisé.`,
+    `
+      <div style="padding:24px;border-radius:18px;background:#fff7ed;border:1px solid #ffedd5;text-align:center;">
+        <div style="font-size:14px;color:#9a3412;margin-bottom:8px;">STOCK RESTANT</div>
+        <div style="font-size:48px;font-weight:bold;color:#c2410c;">${params.remainingStock}</div>
+      </div>
+      <p style="margin-top:20px;color:#4b5563;line-height:1.6;">
+        Nous vous recommandons de réapprovisionner ce produit rapidement pour éviter une rupture de stock.
+      </p>
+    `,
+    'Gérer les stocks',
+    adminUrl
+  );
+
+  const text = [
+    `Alerte Stock Faible : ${itemLabel}`,
+    `Stock restant : ${params.remainingStock}`,
+    `Gérer ici : ${adminUrl}`,
+  ].join('\n');
+
+  const adminEmails = process.env.ADMIN_NOTIF_EMAILS || RESEND_FROM_EMAIL;
+  await safeSendEmail({ to: adminEmails, subject, html, text });
+}

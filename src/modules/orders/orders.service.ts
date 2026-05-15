@@ -3,7 +3,7 @@ import { createError } from '../../middleware/error.middleware';
 import { calculateOrderCommissions } from '../../utils/commission-engine';
 import { generateOrderNumber } from '../../utils/mlm-calculator';
 import { createPlopPlopPayment, verifyPlopPlopPayment } from '../../config/plopplop';
-import { sendOrderCreatedEmail, sendOrderPaidEmail, sendOrderStatusEmail } from '../../services/email.service';
+import { sendOrderCreatedEmail, sendOrderPaidEmail, sendOrderStatusEmail, sendOrderShippedEmail, sendAdminOrderNotification, sendLowStockAlert } from '../../services/email.service';
 import { z } from 'zod';
 
 // ================================
@@ -325,10 +325,19 @@ export async function createOrder(
     // Décrémenter le stock
     for (const item of orderItems) {
       if (item.productVariantId) {
-        await tx.productVariant.update({
+        const updatedVariant = await tx.productVariant.update({
           where: { id: item.productVariantId },
           data: { stockQuantity: { decrement: item.quantity } },
         });
+
+        // Alerte stock faible
+        if (updatedVariant.stockQuantity <= 5) {
+          void sendLowStockAlert({
+            productName: product.name,
+            variantLabel: updatedVariant.label,
+            remainingStock: updatedVariant.stockQuantity,
+          });
+        }
       }
 
       const activeVariants = await tx.productVariant.findMany({
@@ -351,10 +360,18 @@ export async function createOrder(
           },
         });
       } else {
-        await tx.product.update({
+        const updatedProduct = await tx.product.update({
           where: { id: item.productId },
           data: { stockQuantity: { decrement: item.quantity } },
         });
+
+        // Alerte stock faible
+        if (updatedProduct.stockQuantity <= 5) {
+          void sendLowStockAlert({
+            productName: product.name,
+            remainingStock: updatedProduct.stockQuantity,
+          });
+        }
       }
     }
 
@@ -382,6 +399,14 @@ export async function createOrder(
       quantity: item.quantity,
       variantLabel: item.productVariant?.label || null,
     })),
+  });
+
+  // Notification Admin
+  void sendAdminOrderNotification({
+    orderNumber,
+    totalAmount,
+    customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+    itemsCount: order.items.length,
   });
 
   return {
@@ -629,12 +654,23 @@ export async function updateOrderStatus(
       status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED'
     );
 
-    void sendOrderStatusEmail({
-      to: order.customer.email,
-      customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
-      orderNumber: order.orderNumber,
-      statusLabel: statusMessages[status],
-    });
+    if (status === 'SHIPPED') {
+      void sendOrderShippedEmail({
+        to: order.customer.email,
+        customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+        orderNumber: order.orderNumber,
+        carrierName: updated.carrierName,
+        trackingNumber: updated.trackingNumber,
+        estimatedDeliveryDate: updated.estimatedDeliveryDate ? new Date(updated.estimatedDeliveryDate).toLocaleDateString('fr-FR') : null,
+      });
+    } else {
+      void sendOrderStatusEmail({
+        to: order.customer.email,
+        customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+        orderNumber: order.orderNumber,
+        statusLabel: statusMessages[status],
+      });
+    }
   }
 
   return updated;

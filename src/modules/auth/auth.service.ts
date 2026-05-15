@@ -1,10 +1,10 @@
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../config/database';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../config/jwt';
-import { RegisterInput, LoginInput, CustomerAddressInput } from './auth.schema';
+import { RegisterInput, LoginInput, CustomerAddressInput, ForgotPasswordInput, ResetPasswordInput } from './auth.schema';
 import { generateReferralCode } from '../../utils/mlm-calculator';
 import { createError } from '../../middleware/error.middleware';
-import { sendAyizanWelcomeEmail } from '../../services/email.service';
+import { sendAyizanWelcomeEmail, sendPasswordResetEmail } from '../../services/email.service';
 
 const SALT_ROUNDS = 12;
 const MINIMUM_PURCHASE_HTG = 9500;
@@ -379,4 +379,70 @@ export async function becomeAyizan(userId: string) {
   });
 
   return updatedUser;
+}
+
+// ================================
+// PASSWORD RESET
+// ================================
+
+export async function forgotPassword(email: string) {
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, email: true, firstName: true },
+  });
+
+  if (!user) {
+    // Securité : on ne confirme pas si l'email existe ou non
+    return { success: true };
+  }
+
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordResetCode: code,
+      passwordResetExpires: expires,
+    },
+  });
+
+  void sendPasswordResetEmail({
+    to: user.email,
+    firstName: user.firstName,
+    code,
+  });
+
+  return { success: true };
+}
+
+export async function resetPassword(data: ResetPasswordInput) {
+  const { email, code, newPassword } = data;
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, passwordResetCode: true, passwordResetExpires: true },
+  });
+
+  if (
+    !user ||
+    user.passwordResetCode !== code ||
+    !user.passwordResetExpires ||
+    user.passwordResetExpires < new Date()
+  ) {
+    throw createError('Code invalide ou expiré', 400);
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash,
+      passwordResetCode: null,
+      passwordResetExpires: null,
+    },
+  });
+
+  return { success: true };
 }
