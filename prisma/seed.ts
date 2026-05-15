@@ -1,4 +1,4 @@
-import { PrismaClient, Role, AssociateType } from '@prisma/client';
+import { PrismaClient, Role, AssociateType, MlmLevel } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -14,6 +14,7 @@ async function main() {
       email: 'mackenson.jeanlouis@agrikiri.com',
       role: Role.ASSOCIATE,
       associateType: AssociateType.PDG,
+      mlmLevel: MlmLevel.JEAN_JACQUES_DESSALINES,
     },
     // Voting Partners
     {
@@ -112,6 +113,7 @@ async function main() {
       update: {
         role: associate.role,
         associateType: associate.associateType,
+        mlmLevel: (associate as any).mlmLevel || MlmLevel.AYIZAN,
       },
       create: {
         ...associate,

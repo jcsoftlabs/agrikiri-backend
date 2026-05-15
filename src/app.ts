@@ -43,8 +43,10 @@ app.use(cors({
     const allowed = [
       process.env.FRONTEND_URL,
       'http://localhost:3000',
+      'https://www.agrikiri.com',
+      'https://agrikiri.com',
     ];
-    if (allowed.includes(origin) || origin.endsWith('.vercel.app')) {
+    if (allowed.includes(origin) || (origin && origin.endsWith('.vercel.app'))) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
