@@ -55,6 +55,19 @@ export async function verifyOrderPayment(req: AuthRequest, res: Response, next: 
   } catch (error) { next(error); }
 }
 
+export async function markOrderPaymentFailed(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const isAdmin = req.user!.role === 'ADMIN';
+    const order = await ordersService.markOrderPaymentFailed(
+      req.params.id,
+      req.user!.userId,
+      isAdmin,
+      typeof req.body?.reason === 'string' ? req.body.reason : undefined
+    );
+    res.json({ success: true, message: 'Paiement marqué comme non confirmé', data: order });
+  } catch (error) { next(error); }
+}
+
 export async function getMyOrders(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   try {
     const { page, limit } = req.query;

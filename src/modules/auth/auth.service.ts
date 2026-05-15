@@ -7,7 +7,7 @@ import { createError } from '../../middleware/error.middleware';
 import { sendAyizanWelcomeEmail, sendPasswordResetEmail, sendWelcomeEmail } from '../../services/email.service';
 
 const SALT_ROUNDS = 12;
-const MINIMUM_PURCHASE_HTG = 9500;
+const MINIMUM_PURCHASE_HTG = 9000;
 
 const customerAddressSelect = {
   id: true,

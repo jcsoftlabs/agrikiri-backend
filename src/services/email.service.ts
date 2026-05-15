@@ -20,6 +20,7 @@ interface OrderEmailLine {
   variantLabel?: string | null;
   unitPrice?: number;
   lineTotal?: number;
+  imageUrl?: string | null;
 }
 
 interface OrderEmailSummary {
@@ -136,15 +137,26 @@ function renderOrderLines(lines: OrderEmailLine[]) {
     .map((line) => {
       const label = line.variantLabel ? `${line.name} (${line.variantLabel})` : line.name;
       return `
-        <li style="margin:0 0 10px 0;color:#374151;">
-          <strong>${escapeHtml(label)}</strong> x ${line.quantity}
-          ${typeof line.lineTotal === 'number' ? `<span style="color:#6b7280;"> — ${escapeHtml(formatCurrency(line.lineTotal))}</span>` : ''}
-        </li>
+        <div style="display:flex;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid #eef2f7;">
+          <div style="width:72px;height:72px;border-radius:16px;background:#f8fbf5;border:1px solid #e5efe0;overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+            ${line.imageUrl ? `<img src="${escapeHtml(line.imageUrl)}" alt="${escapeHtml(label)}" style="max-width:100%;max-height:100%;display:block;" />` : `<span style="font-size:11px;color:#94a3b8;">AGRIKIRI</span>`}
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;color:#183222;">${escapeHtml(label)}</div>
+            <div style="margin-top:4px;color:#6b7280;font-size:13px;">
+              Qté : ${line.quantity}
+              ${typeof line.unitPrice === 'number' ? ` • ${escapeHtml(formatCurrency(line.unitPrice))} / unité` : ''}
+            </div>
+          </div>
+          <div style="text-align:right;color:#183222;font-weight:700;white-space:nowrap;">
+            ${typeof line.lineTotal === 'number' ? escapeHtml(formatCurrency(line.lineTotal)) : ''}
+          </div>
+        </div>
       `;
     })
     .join('');
 
-  return `<ul style="padding-left:18px;margin:18px 0;">${itemsHtml}</ul>`;
+  return `<div style="margin:18px 0 0;">${itemsHtml}</div>`;
 }
 
 function renderMoneyBreakdown(summary: OrderEmailSummary) {
@@ -234,17 +246,26 @@ export async function sendOrderCreatedEmail(params: {
   deliveryZone?: string | null;
   items: OrderEmailLine[];
   deliveryAddress?: OrderEmailAddress;
+  requiresPaymentConfirmation?: boolean;
+  paymentUrl?: string | null;
 }) {
   const orderUrl = `${FRONTEND_URL}/orders`;
   const detailUrl = `${FRONTEND_URL}/orders`;
-  const subject = `Commande ${params.orderNumber} créée avec succès`;
-  const intro = `Bonjour ${params.customerName}, votre commande a bien été enregistrée sur AGRIKIRI.`;
+  const isAwaitingPayment = Boolean(params.requiresPaymentConfirmation);
+  const subject = isAwaitingPayment
+    ? `Commande ${params.orderNumber} reçue - paiement en attente`
+    : `Commande ${params.orderNumber} confirmée avec succès`;
+  const intro = isAwaitingPayment
+    ? `Bonjour ${params.customerName}, votre commande a bien été reçue, mais elle reste en attente tant que le paiement n’est pas confirmé.`
+    : `Bonjour ${params.customerName}, votre commande a bien été confirmée sur AGRIKIRI.`;
   const html = wrapEmail(
-    'Commande enregistrée',
+    isAwaitingPayment ? 'Commande en attente de paiement' : 'Commande confirmée',
     intro,
     `
       <p style="margin:0 0 16px;color:#4b5563;line-height:1.7;">
-        Nous avons bien reçu votre commande. Vous pourrez suivre sa préparation, votre paiement et la livraison depuis votre espace commandes.
+        ${isAwaitingPayment
+          ? 'Nous avons bien préparé votre dossier de commande. La commande sera réellement confirmée dès que le paiement en ligne sera validé.'
+          : 'Nous avons bien reçu votre commande. Vous pourrez suivre sa préparation, votre paiement et la livraison depuis votre espace commandes.'}
       </p>
       ${renderOrderMeta({
         orderNumber: params.orderNumber,
@@ -268,13 +289,15 @@ export async function sendOrderCreatedEmail(params: {
       </div>
       ${renderAddressBlock(params.deliveryAddress)}
     `,
-    'Suivre ma commande',
-    orderUrl
+    isAwaitingPayment ? 'Finaliser le paiement' : 'Suivre ma commande',
+    isAwaitingPayment && params.paymentUrl ? params.paymentUrl : orderUrl
   );
 
   const text = [
     `Bonjour ${params.customerName},`,
-    `Votre commande ${params.orderNumber} a bien été créée.`,
+    isAwaitingPayment
+      ? `Votre commande ${params.orderNumber} a bien été reçue, mais elle reste en attente de paiement.`
+      : `Votre commande ${params.orderNumber} a bien été confirmée.`,
     `Sous-total : ${formatCurrency(params.subtotalAmount ?? params.totalAmount)}`,
     `Livraison : ${formatCurrency(params.deliveryFee ?? 0)}`,
     `Montant total : ${formatCurrency(params.totalAmount)}`,
@@ -282,8 +305,10 @@ export async function sendOrderCreatedEmail(params: {
     params.deliveryModeLabel ? `Mode de livraison : ${params.deliveryModeLabel}` : '',
     params.deliveryZone ? `Zone : ${params.deliveryZone}` : '',
     '',
-    'Vous pouvez suivre votre commande ici :',
-    orderUrl,
+    isAwaitingPayment && params.paymentUrl
+      ? 'Finalisez votre paiement ici :'
+      : 'Vous pouvez suivre votre commande ici :',
+    isAwaitingPayment && params.paymentUrl ? params.paymentUrl : orderUrl,
   ].join('\n');
 
   await safeSendEmail({ to: params.to, subject, html, text });
@@ -299,6 +324,7 @@ export async function sendOrderPaidEmail(params: {
   paymentMethod?: string;
   deliveryModeLabel?: string;
   deliveryZone?: string | null;
+  items?: OrderEmailLine[];
 }) {
   const orderUrl = `${FRONTEND_URL}/orders`;
   const subject = `Paiement confirmé pour ${params.orderNumber}`;
@@ -325,6 +351,11 @@ export async function sendOrderPaidEmail(params: {
         deliveryFee: params.deliveryFee,
         totalAmount: params.totalAmount,
       })}
+      ${params.items?.length ? `
+      <div style="margin-top:20px;padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;">
+        <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#6b7280;margin-bottom:10px;">Produits confirmés</div>
+        ${renderOrderLines(params.items)}
+      </div>` : ''}
       <div style="margin-top:20px;padding:18px;border-radius:18px;background:#f8fbf5;border:1px solid #dfead8;color:#374151;line-height:1.7;">
         Votre commande est maintenant en préparation. Vous retrouverez également votre facture depuis l’espace commandes.
       </div>

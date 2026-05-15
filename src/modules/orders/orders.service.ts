@@ -427,12 +427,15 @@ export async function createOrder(
   });
 
   // Notification au client
+  const isAwaitingPaymentConfirmation = Boolean(paymentSession && isOnlinePaymentMethod(paymentMethod));
   await prisma.notification.create({
     data: {
       userId: customerId,
       type: 'ORDER_CREATED',
-      title: '✅ Commande confirmée',
-      message: `Votre commande ${orderNumber} a été créée avec succès. Total: ${totalAmount.toLocaleString()} HTG`,
+      title: isAwaitingPaymentConfirmation ? '⏳ Paiement en attente' : '✅ Commande confirmée',
+      message: isAwaitingPaymentConfirmation
+        ? `Votre commande ${orderNumber} a été reçue. Finalisez le paiement pour la confirmer. Total: ${totalAmount.toLocaleString()} HTG`
+        : `Votre commande ${orderNumber} a été créée avec succès. Total: ${totalAmount.toLocaleString()} HTG`,
     },
   });
 
@@ -450,9 +453,13 @@ export async function createOrder(
       name: item.product.name,
       quantity: item.quantity,
       variantLabel: item.productVariant?.label || null,
+      unitPrice: Number(item.unitPrice),
       lineTotal: Number(item.unitPrice) * item.quantity,
+      imageUrl: item.product.images?.[0]?.url || null,
     })),
     deliveryAddress,
+    requiresPaymentConfirmation: isAwaitingPaymentConfirmation,
+    paymentUrl: paymentSession?.paymentUrl || null,
   });
 
   // Notification Admin
@@ -506,6 +513,12 @@ export async function markOrderPaid(orderId: string) {
     where: { id: orderId },
     data: { paymentStatus: 'PAID', status: 'PROCESSING' },
     include: {
+      items: {
+        include: {
+          product: { select: { name: true, images: { take: 1 } } },
+          productVariant: { select: { id: true, label: true } },
+        },
+      },
       customer: { select: { email: true, firstName: true, lastName: true } },
     },
   });
@@ -531,6 +544,14 @@ export async function markOrderPaid(orderId: string) {
     paymentMethod: getPaymentMethodLabel(order.paymentMethod as z.infer<typeof createOrderSchema>['paymentMethod']),
     deliveryModeLabel: getDeliveryModeLabel(order.deliveryMode as 'INTERNAL' | 'EXTERNAL'),
     deliveryZone: order.deliveryZone || null,
+    items: order.items.map((item: any) => ({
+      name: item.product.name,
+      quantity: item.quantity,
+      variantLabel: item.productVariant?.label || null,
+      unitPrice: Number(item.unitPrice),
+      lineTotal: Number(item.unitPrice) * item.quantity,
+      imageUrl: item.product.images?.[0]?.url || null,
+    })),
   });
 
   return order;
@@ -580,6 +601,72 @@ export async function verifyOrderPayment(orderId: string, userId: string, isAdmi
       verifiedAt: new Date().toISOString(),
     },
   };
+}
+
+export async function markOrderPaymentFailed(
+  orderId: string,
+  userId: string,
+  isAdmin: boolean,
+  reason?: string
+) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      customer: { select: { email: true, firstName: true, lastName: true } },
+    },
+  });
+
+  if (!order) throw createError('Commande introuvable', 404);
+  if (!isAdmin && order.customerId !== userId) throw createError('Accès refusé', 403);
+  if (order.paymentMethod === 'CASH') {
+    throw createError('Cette commande ne concerne pas un paiement en ligne.', 400);
+  }
+  if (order.paymentStatus === 'PAID') {
+    throw createError('Cette commande a déjà été payée.', 400);
+  }
+
+  const updatedOrder = await prisma.order.update({
+    where: { id: orderId },
+    data: {
+      paymentStatus: 'FAILED',
+      status: order.status === 'PENDING' ? 'CANCELLED' : order.status,
+    },
+  });
+
+  const failureLabel = reason === 'cancelled' ? 'Paiement annulé' : 'Paiement échoué';
+  const failureMessage =
+    reason === 'cancelled'
+      ? 'Le paiement a été annulé avant confirmation.'
+      : 'Le paiement n’a pas pu être confirmé.';
+
+  await createTrackingEvent(
+    prisma,
+    orderId,
+    failureLabel,
+    failureMessage,
+    updatedOrder.status as 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED'
+  );
+
+  await prisma.notification.create({
+    data: {
+      userId: order.customerId,
+      type: 'PAYMENT_FAILED',
+      title: reason === 'cancelled' ? 'Paiement annulé' : 'Paiement échoué',
+      message: `Commande ${order.orderNumber} : ${failureMessage}`,
+    },
+  });
+
+  void sendOrderStatusEmail({
+    to: order.customer.email,
+    customerName: `${order.customer.firstName} ${order.customer.lastName}`.trim(),
+    orderNumber: order.orderNumber,
+    statusLabel: failureLabel,
+    deliveryModeLabel: getDeliveryModeLabel(order.deliveryMode as 'INTERNAL' | 'EXTERNAL'),
+    deliveryZone: order.deliveryZone || null,
+    trackingNumber: order.trackingNumber || null,
+  });
+
+  return updatedOrder;
 }
 
 // ================================
