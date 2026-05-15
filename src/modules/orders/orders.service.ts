@@ -299,6 +299,8 @@ export async function createOrder(
     });
   }
 
+  const orderItemsCreate = orderItems.map(({ productName, ...rest }) => rest);
+
   // Vérifier que l'ayizan existe si fourni
   if (ayizanId) {
     const ayizan = await prisma.user.findUnique({ where: { id: ayizanId } });
@@ -346,7 +348,7 @@ export async function createOrder(
         carrierName: defaultCarrierName,
         deliveryZone: defaultDeliveryZone || null,
         items: {
-          create: orderItems,
+          create: orderItemsCreate,
         },
       },
       include: {
