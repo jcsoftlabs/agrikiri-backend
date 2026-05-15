@@ -5,8 +5,10 @@ import { CommissionType, MlmLevel, Prisma } from '@prisma/client';
 // COMMISSION RATES
 // ================================
 
-const DIRECT_COMMISSION_RATE = 0.10;   // 10% sur ses propres ventes
-const NETWORK_LEVEL1_RATE = 0.05;      // 5% sur ventes des recrues directes
+export const VP_TO_HTG_RATE = 15;          // 1 VP = 15 HTG
+const DIRECT_COMMISSION_RATE = 1.0;        // 100% de la base VP
+const NETWORK_LEVEL1_RATE = 0.20;          // 20% de la base VP pour le sponsor direct
+const NETWORK_LEVEL2_RATE = 0.10;          // 10% de la base VP pour le sponsor niveau 2
 
 // Commission mensuelle par niveau (HTG)
 export const MONTHLY_COMMISSIONS: Record<string, number | null> = {
@@ -37,7 +39,7 @@ export async function calculateOrderCommissions(orderId: string): Promise<void> 
     where: { id: orderId },
     include: {
       items: { include: { product: true } },
-      ayizan: { include: { sponsor: true } },
+      ayizan: { include: { sponsor: { include: { sponsor: true } } } },
     },
   });
 
@@ -46,8 +48,10 @@ export async function calculateOrderCommissions(orderId: string): Promise<void> 
   const currentMonth = new Date().getMonth() + 1;
   const currentYear = new Date().getFullYear();
 
-  // 1. Commission directe pour l'AYIZAN vendeur (10%)
-  const directAmount = Number(order.totalAmount) * DIRECT_COMMISSION_RATE;
+  const commissionBaseAmount = Number(order.totalVP) * VP_TO_HTG_RATE;
+
+  // 1. Commission directe pour l'AYIZAN vendeur (100% de la base VP)
+  const directAmount = commissionBaseAmount * DIRECT_COMMISSION_RATE;
 
   await prisma.commission.create({
     data: {
@@ -63,9 +67,9 @@ export async function calculateOrderCommissions(orderId: string): Promise<void> 
     },
   });
 
-  // 2. Commission réseau pour le sponsor (5%)
+  // 2. Commission réseau niveau 1 pour le sponsor direct (20% de la base VP)
   if (order.ayizan.sponsorId && order.ayizan.sponsor) {
-    const networkAmount = Number(order.totalAmount) * NETWORK_LEVEL1_RATE;
+    const networkAmount = commissionBaseAmount * NETWORK_LEVEL1_RATE;
 
     await prisma.commission.create({
       data: {
@@ -82,7 +86,26 @@ export async function calculateOrderCommissions(orderId: string): Promise<void> 
     });
   }
 
-  // 3. Mettre à jour les Volume Points mensuels
+  // 3. Commission réseau niveau 2 pour le sponsor du sponsor (10% de la base VP)
+  if (order.ayizan.sponsor?.sponsorId && order.ayizan.sponsor.sponsor) {
+    const level2NetworkAmount = commissionBaseAmount * NETWORK_LEVEL2_RATE;
+
+    await prisma.commission.create({
+      data: {
+        ayizanId: order.ayizan.sponsor.sponsorId,
+        orderId: order.id,
+        sourceUserId: order.ayizan.sponsorId,
+        type: CommissionType.NETWORK,
+        amount: new Prisma.Decimal(level2NetworkAmount),
+        percentage: new Prisma.Decimal(NETWORK_LEVEL2_RATE * 100),
+        mlmLevel: order.ayizan.sponsor.sponsor.mlmLevel,
+        month: currentMonth,
+        year: currentYear,
+      },
+    });
+  }
+
+  // 4. Mettre à jour les Volume Points mensuels
   await updateMonthlyVP(order.ayizanId, Number(order.totalVP), currentMonth, currentYear);
 }
 
