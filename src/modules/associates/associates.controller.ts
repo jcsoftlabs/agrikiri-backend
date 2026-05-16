@@ -248,34 +248,51 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
     doc.y = previousY;
   };
 
+  // Header
+  doc.roundedRect(50, 40, 495, 98, 18).fill(PDF_COLORS.surface);
+
   if (logoBuffer) {
-    doc.image(logoBuffer, 50, 45, { fit: [120, 50] });
+    doc.image(logoBuffer, 66, 56, { fit: [88, 42] });
+  } else {
+    doc
+      .fontSize(18)
+      .fillColor(PDF_COLORS.brand)
+      .font('Helvetica-Bold')
+      .text('AGRIKIRI', 66, 62, { width: 95, lineBreak: false });
   }
 
-  // Header
-  doc.roundedRect(50, 40, 495, 88, 18).fill(PDF_COLORS.surface);
   doc
-    .fontSize(20)
+    .fontSize(19)
     .fillColor(PDF_COLORS.brand)
-    .text('RAPPORT DE DOSSIER', logoBuffer ? 190 : 70, 58);
+    .font('Helvetica-Bold')
+    .text('RAPPORT DE DOSSIER', 175, 58, { width: 210, lineBreak: false });
   doc
     .fontSize(10)
     .fillColor(PDF_COLORS.muted)
-    .text('Synthèse administrative et financière', logoBuffer ? 190 : 70, 84);
+    .font('Helvetica')
+    .text('Synthèse administrative et financière', 175, 84, { width: 220, lineBreak: false });
+  doc
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(COMPANY_PHONE, 398, 56, { width: 130, align: 'right', lineBreak: false });
+  doc
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(COMPANY_EMAIL, 398, 72, { width: 130, align: 'right', lineBreak: false });
   doc
     .fontSize(10)
     .fillColor(PDF_COLORS.muted)
-    .text(`Généré le : ${formatDateTime(new Date())}`, 50, 58, { align: 'right' });
+    .text(`Généré le : ${formatDateTime(new Date())}`, 398, 94, { width: 130, align: 'right' });
   doc
     .fontSize(9)
     .fillColor(PDF_COLORS.muted)
-    .text(`Référence : ${dossier.id.slice(0, 8).toUpperCase()}`, 50, 80, { align: 'right' });
+    .text(`Référence : ${dossier.id.slice(0, 8).toUpperCase()}`, 175, 108, { width: 160, lineBreak: false });
   doc
     .fontSize(9)
     .fillColor(PDF_COLORS.muted)
-    .text(`Version : ${dossierVersion}`, 50, 96, { align: 'right' });
+    .text(`Version : ${dossierVersion}`, 398, 108, { width: 130, align: 'right', lineBreak: false });
 
-  doc.y = 150;
+  doc.y = 160;
 
   doc
     .fontSize(22)
