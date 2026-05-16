@@ -125,6 +125,8 @@ async function getDossierLogoBuffer() {
 
 export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const dossier = await associateService.getDossierById(req.params.id);
+  const pdg = await associateService.getPdgApprover();
+  const pdgName = pdg ? `${pdg.firstName} ${pdg.lastName}`.trim() : 'PDG AGRIKIRI';
   const disbursementLines = Array.isArray(dossier.disbursementLines)
     ? dossier.disbursementLines.filter(
         (line: any) => line && typeof line.reason === 'string' && typeof line.amount === 'number'
@@ -137,7 +139,7 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const logoBuffer = await getDossierLogoBuffer();
   const dossierVersion = buildDossierVersion(dossier.updatedAt);
   const isValidated = dossier.status === 'COMPLETED';
-  const approverName = isValidated ? 'PDG AGRIKIRI' : 'Validation en attente';
+  const approverName = isValidated ? pdgName : 'Validation en attente';
   const approverRole = isValidated ? 'Direction générale' : 'Document non encore clôturé';
   const chunks: Buffer[] = [];
   doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
@@ -372,7 +374,7 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   doc
     .fontSize(24)
     .fillColor(isValidated ? PDF_COLORS.brand : '#b8c0b9')
-    .text('Christopher JEROME', 320, approvalTop + 36, { width: 180 });
+    .text(pdgName, 320, approvalTop + 36, { width: 180 });
   doc
     .moveTo(320, approvalTop + 84)
     .lineTo(510, approvalTop + 84)

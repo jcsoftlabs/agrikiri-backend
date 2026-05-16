@@ -45,6 +45,21 @@ export async function getDossierById(id: string) {
   return dossier;
 }
 
+export async function getPdgApprover() {
+  return prisma.user.findFirst({
+    where: {
+      role: 'ASSOCIATE',
+      associateType: 'PDG',
+      isActive: true,
+    },
+    select: {
+      firstName: true,
+      lastName: true,
+    },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
 export async function createDossier(userId: string, data: CreateDossierInput) {
   const disbursementLines = (data.disbursementLines ?? []).map((line) => ({
     reason: line.reason.trim(),
