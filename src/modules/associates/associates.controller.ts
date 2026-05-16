@@ -5,23 +5,51 @@ import { createDossierSchema, updateDossierStatusSchema, createVoteSchema, submi
 import PDFDocument from 'pdfkit';
 import { createError } from '../../middleware/error.middleware';
 
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
+const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
+let dossierLogoCache: Buffer | null = null;
+
+async function getDossierLogoBuffer() {
+  if (dossierLogoCache) return dossierLogoCache;
+
+  try {
+    const response = await fetch(LOGO_URL);
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    dossierLogoCache = Buffer.from(arrayBuffer);
+    return dossierLogoCache;
+  } catch {
+    return null;
+  }
+}
 
 export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const dossier = await associateService.getDossierById(req.params.id);
   
   const doc = new PDFDocument({ margin: 50 });
   const filename = `Dossier_${dossier.id.slice(0, 8)}.pdf`;
+  const logoBuffer = await getDossierLogoBuffer();
 
   res.setHeader('Content-disposition', `attachment; filename=${filename}`);
   res.setHeader('Content-type', 'application/pdf');
 
   doc.pipe(res);
 
+  if (logoBuffer) {
+    doc.image(logoBuffer, 50, 45, { fit: [120, 50] });
+  }
+
   // Header
-  doc.fontSize(20).text('RAPPORT DE DOSSIER - AGRIKIRI', { align: 'center' });
-  doc.moveDown();
-  doc.fontSize(10).text(`Généré le : ${new Date().toLocaleString()}`, { align: 'right' });
-  doc.moveDown(2);
+  doc
+    .fontSize(20)
+    .fillColor('#1a2e1a')
+    .text('RAPPORT DE DOSSIER - AGRIKIRI', logoBuffer ? 190 : 50, 55);
+  doc
+    .fontSize(10)
+    .fillColor('gray')
+    .text(`Généré le : ${new Date().toLocaleString()}`, 50, logoBuffer ? 72 : 85, { align: 'right' });
+  doc.y = logoBuffer ? 125 : 115;
+  doc.moveDown(1.5);
 
   // Dossier Info
   doc.fontSize(16).fillColor('#2D7A2D').text(dossier.title);
