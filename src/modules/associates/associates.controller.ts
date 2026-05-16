@@ -132,7 +132,7 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
     : [];
   const totalDisbursement = Number(dossier.disbursementTotal ?? 0);
   
-  const doc = new PDFDocument({ margin: 50 });
+  const doc = new PDFDocument({ margin: 50, bufferPages: true });
   const filename = `Dossier_${dossier.id.slice(0, 8)}.pdf`;
   const logoBuffer = await getDossierLogoBuffer();
   const dossierVersion = buildDossierVersion(dossier.updatedAt);
@@ -141,9 +141,8 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const approverRole = isValidated ? 'Direction générale' : 'Document non encore clôturé';
   const chunks: Buffer[] = [];
   doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-  let currentPageNumber = 1;
 
-  const renderFooter = () => {
+  const renderFooter = (pageNumber: number, totalPages: number) => {
     const footerY = doc.page.height - 35;
     const previousX = doc.x;
     const previousY = doc.y;
@@ -161,18 +160,10 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
         lineBreak: false,
       });
     doc
-      .text(`Page ${currentPageNumber}`, 450, footerY, { width: 95, align: 'right', lineBreak: false });
+      .text(`Page ${pageNumber}/${totalPages}`, 450, footerY, { width: 95, align: 'right', lineBreak: false });
     doc.x = previousX;
     doc.y = previousY;
   };
-
-  doc.on('pageAdded', () => {
-    currentPageNumber += 1;
-    drawWatermark(doc);
-    renderFooter();
-  });
-
-  drawWatermark(doc);
 
   if (logoBuffer) {
     doc.image(logoBuffer, 50, 45, { fit: [120, 50] });
@@ -415,7 +406,14 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
     doc.on('end', () => resolve());
     doc.on('error', (error) => reject(error));
   });
-  renderFooter();
+
+  const pageRange = doc.bufferedPageRange();
+  for (let index = 0; index < pageRange.count; index += 1) {
+    doc.switchToPage(pageRange.start + index);
+    drawWatermark(doc);
+    renderFooter(index + 1, pageRange.count);
+  }
+
   doc.end();
 
   await pdfReady;
