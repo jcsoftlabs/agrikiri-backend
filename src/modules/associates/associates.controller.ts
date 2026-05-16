@@ -21,10 +21,8 @@ const PDF_COLORS = {
 };
 
 function formatHtg(amount: number) {
-  return new Intl.NumberFormat('fr-FR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  const roundedAmount = Math.round(Number(amount || 0));
+  return String(roundedAmount).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
 function formatDateTime(value: Date | string) {
@@ -249,10 +247,10 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   };
 
   // Header
-  doc.roundedRect(50, 40, 495, 98, 18).fill(PDF_COLORS.surface);
+  doc.roundedRect(50, 40, 495, 110, 18).fill(PDF_COLORS.surface);
 
   if (logoBuffer) {
-    doc.image(logoBuffer, 66, 56, { fit: [88, 42] });
+    doc.image(logoBuffer, 66, 58, { fit: [82, 40] });
   } else {
     doc
       .fontSize(18)
@@ -262,27 +260,15 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   }
 
   doc
-    .fontSize(19)
+    .fontSize(16)
     .fillColor(PDF_COLORS.brand)
     .font('Helvetica-Bold')
-    .text('RAPPORT DE DOSSIER', 175, 58, { width: 210, lineBreak: false });
+    .text('RAPPORT DE DOSSIER', 175, 58, { width: 220, lineBreak: false });
   doc
     .fontSize(10)
     .fillColor(PDF_COLORS.muted)
     .font('Helvetica')
-    .text('Synthèse administrative et financière', 175, 84, { width: 220, lineBreak: false });
-  doc
-    .fontSize(9)
-    .fillColor(PDF_COLORS.text)
-    .text(COMPANY_PHONE, 398, 56, { width: 130, align: 'right', lineBreak: false });
-  doc
-    .fontSize(9)
-    .fillColor(PDF_COLORS.text)
-    .text(COMPANY_EMAIL, 398, 72, { width: 130, align: 'right', lineBreak: false });
-  doc
-    .fontSize(10)
-    .fillColor(PDF_COLORS.muted)
-    .text(`Généré le : ${formatDateTime(new Date())}`, 398, 94, { width: 130, align: 'right' });
+    .text('Synthèse administrative et financière', 175, 82, { width: 220, lineBreak: false });
   doc
     .fontSize(9)
     .fillColor(PDF_COLORS.muted)
@@ -290,9 +276,25 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   doc
     .fontSize(9)
     .fillColor(PDF_COLORS.muted)
-    .text(`Version : ${dossierVersion}`, 398, 108, { width: 130, align: 'right', lineBreak: false });
+    .text(`Version : ${dossierVersion}`, 175, 124, { width: 160, lineBreak: false });
+  doc
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(COMPANY_PHONE, 398, 58, { width: 130, align: 'right', lineBreak: false });
+  doc
+    .fontSize(9)
+    .fillColor(PDF_COLORS.text)
+    .text(COMPANY_EMAIL, 398, 76, { width: 130, align: 'right', lineBreak: false });
+  doc
+    .fontSize(10)
+    .fillColor(PDF_COLORS.muted)
+    .text('Généré le', 398, 104, { width: 130, align: 'right', lineBreak: false });
+  doc
+    .fontSize(9)
+    .fillColor(PDF_COLORS.muted)
+    .text(formatDateTime(new Date()), 360, 120, { width: 168, align: 'right', lineBreak: false });
 
-  doc.y = 160;
+  doc.y = 172;
 
   doc
     .fontSize(22)
@@ -414,9 +416,9 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
     .fillColor(PDF_COLORS.muted)
     .text('Signature visuelle', 320, approvalTop + 14, { width: 160 });
   doc
-    .fontSize(24)
+    .fontSize(isValidated ? 18 : 16)
     .fillColor(isValidated ? PDF_COLORS.brand : '#b8c0b9')
-    .text(pdgName, 320, approvalTop + 36, { width: 180 });
+    .text(isValidated ? pdgName : 'Signature requise', 320, approvalTop + 38, { width: 180, lineBreak: false });
   doc
     .moveTo(320, approvalTop + 84)
     .lineTo(510, approvalTop + 84)
