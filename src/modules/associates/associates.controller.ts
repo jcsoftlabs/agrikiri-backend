@@ -90,19 +90,23 @@ function drawInfoCard(
 function drawWatermark(doc: PDFKit.PDFDocument) {
   const centerX = doc.page.width / 2;
   const centerY = doc.page.height / 2;
+  const previousX = doc.x;
+  const previousY = doc.y;
   doc.save();
   doc.rotate(-32, { origin: [centerX, centerY] });
   doc
     .fontSize(52)
     .fillColor('#edf5eb')
     .font('Helvetica-Bold')
-    .text('AGRIKIRI', centerX - 160, centerY - 20, { width: 320, align: 'center' });
+    .text('AGRIKIRI', centerX - 160, centerY - 20, { width: 320, align: 'center', lineBreak: false });
   doc
     .fontSize(16)
     .fillColor('#f3f8f1')
     .font('Helvetica')
-    .text('Document interne', centerX - 120, centerY + 28, { width: 240, align: 'center' });
+    .text('Document interne', centerX - 120, centerY + 28, { width: 240, align: 'center', lineBreak: false });
   doc.restore();
+  doc.x = previousX;
+  doc.y = previousY;
 }
 
 async function getDossierLogoBuffer() {
@@ -141,6 +145,8 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
 
   const renderFooter = () => {
     const footerY = doc.page.height - 35;
+    const previousX = doc.x;
+    const previousY = doc.y;
     doc
       .moveTo(50, footerY - 10)
       .lineTo(545, footerY - 10)
@@ -150,9 +156,14 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
     doc
       .fontSize(8)
       .fillColor(PDF_COLORS.muted)
-      .text(`AGRIKIRI - Rapport de dossier confidentiel • ${COMPANY_PHONE} • ${COMPANY_EMAIL}`, 50, footerY, { width: 360 });
+      .text(`AGRIKIRI - Rapport de dossier confidentiel • ${COMPANY_PHONE} • ${COMPANY_EMAIL}`, 50, footerY, {
+        width: 360,
+        lineBreak: false,
+      });
     doc
-      .text(`Page ${currentPageNumber}`, 450, footerY, { width: 95, align: 'right' });
+      .text(`Page ${currentPageNumber}`, 450, footerY, { width: 95, align: 'right', lineBreak: false });
+    doc.x = previousX;
+    doc.y = previousY;
   };
 
   doc.on('pageAdded', () => {
@@ -400,13 +411,14 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
 
   doc.y = approvalTop + 126;
 
-  renderFooter();
-  doc.end();
-
-  await new Promise<void>((resolve, reject) => {
+  const pdfReady = new Promise<void>((resolve, reject) => {
     doc.on('end', () => resolve());
     doc.on('error', (error) => reject(error));
   });
+  renderFooter();
+  doc.end();
+
+  await pdfReady;
 
   const pdfBuffer = Buffer.concat(chunks);
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
