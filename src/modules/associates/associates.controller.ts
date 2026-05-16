@@ -46,6 +46,53 @@ function buildDossierVersion(date: Date | string) {
   return `v${yyyy}.${mm}.${dd}`;
 }
 
+interface FinancialLine {
+  reason: string;
+  amount: number;
+}
+
+function parseFinancialDescription(description: string): { narrative: string; lines: FinancialLine[] } {
+  const narrativeLines: string[] = [];
+  const lines: FinancialLine[] = [];
+
+  description.split(/\r?\n/).forEach((rawLine) => {
+    const cleanedLine = rawLine.trim();
+    const match = cleanedLine.match(/^(?:[-•]\s*)?(.+?)\s*:\s*([0-9][0-9\s,.]*)\s*(?:gourdes?|htg)?\.?$/i);
+
+    if (!match) {
+      if (cleanedLine) narrativeLines.push(cleanedLine);
+      return;
+    }
+
+    const amount = Number(match[2].replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      narrativeLines.push(cleanedLine);
+      return;
+    }
+
+    lines.push({
+      reason: match[1].trim(),
+      amount,
+    });
+  });
+
+  return {
+    narrative: narrativeLines.join('\n'),
+    lines,
+  };
+}
+
+function normalizeFinancialLines(value: unknown): FinancialLine[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((line: any) => ({
+      reason: typeof line?.reason === 'string' ? line.reason.trim() : '',
+      amount: Number(line?.amount),
+    }))
+    .filter((line) => line.reason && Number.isFinite(line.amount) && line.amount > 0);
+}
+
 function ensureSpace(doc: PDFKit.PDFDocument, heightNeeded: number) {
   const bottomLimit = doc.page.height - doc.page.margins.bottom - heightNeeded;
   if (doc.y > bottomLimit) {
@@ -87,28 +134,6 @@ function drawInfoCard(
     .text(value, x + 12, y + 24, { width: width - 24 });
 }
 
-function drawWatermark(doc: PDFKit.PDFDocument) {
-  const centerX = doc.page.width / 2;
-  const centerY = doc.page.height / 2;
-  const previousX = doc.x;
-  const previousY = doc.y;
-  doc.save();
-  doc.rotate(-32, { origin: [centerX, centerY] });
-  doc
-    .fontSize(52)
-    .fillColor('#edf5eb')
-    .font('Helvetica-Bold')
-    .text('AGRIKIRI', centerX - 160, centerY - 20, { width: 320, align: 'center', lineBreak: false });
-  doc
-    .fontSize(16)
-    .fillColor('#f3f8f1')
-    .font('Helvetica')
-    .text('Document interne', centerX - 120, centerY + 28, { width: 240, align: 'center', lineBreak: false });
-  doc.restore();
-  doc.x = previousX;
-  doc.y = previousY;
-}
-
 async function getDossierLogoBuffer() {
   if (dossierLogoCache) return dossierLogoCache;
 
@@ -123,16 +148,72 @@ async function getDossierLogoBuffer() {
   }
 }
 
+function drawFinancialTable(doc: PDFKit.PDFDocument, lines: FinancialLine[], total: number) {
+  if (lines.length === 0) return;
+
+  const tableX = 50;
+  const tableWidth = 495;
+  const labelWidth = 330;
+  const amountWidth = 130;
+  const amountX = tableX + tableWidth - amountWidth - 14;
+  const minRowHeight = 30;
+
+  ensureSpace(doc, 72);
+  const headerY = doc.y;
+  doc.roundedRect(tableX, headerY, tableWidth, minRowHeight, 6).fillAndStroke(PDF_COLORS.brandSoft, PDF_COLORS.line);
+  doc
+    .fillColor(PDF_COLORS.brand)
+    .fontSize(10)
+    .font('Helvetica-Bold')
+    .text('Désignation', tableX + 14, headerY + 9, { width: labelWidth });
+  doc.text('Montant', amountX, headerY + 9, { width: amountWidth, align: 'right' });
+
+  let currentY = headerY + minRowHeight;
+  lines.forEach((line, index) => {
+    const textHeight = doc.heightOfString(line.reason, { width: labelWidth, lineGap: 2 });
+    const rowHeight = Math.max(minRowHeight, textHeight + 18);
+    if (currentY > doc.page.height - doc.page.margins.bottom - rowHeight - 54) {
+      doc.addPage();
+      currentY = 50;
+    }
+
+    doc
+      .roundedRect(tableX, currentY, tableWidth, rowHeight, 4)
+      .fillAndStroke(index % 2 === 0 ? PDF_COLORS.white : '#fbfbf7', '#ece9df');
+    doc
+      .fillColor(PDF_COLORS.text)
+      .fontSize(10)
+      .font('Helvetica')
+      .text(line.reason, tableX + 14, currentY + 9, { width: labelWidth, lineGap: 2 });
+    doc
+      .font('Helvetica-Bold')
+      .text(`${formatHtg(line.amount)} HTG`, amountX, currentY + 9, { width: amountWidth, align: 'right' });
+    currentY += rowHeight + 4;
+  });
+
+  doc
+    .roundedRect(tableX, currentY + 4, tableWidth, 32, 6)
+    .fillAndStroke(PDF_COLORS.brandSoft, PDF_COLORS.line);
+  doc
+    .fillColor(PDF_COLORS.brand)
+    .fontSize(11)
+    .font('Helvetica-Bold')
+    .text('Total', tableX + 14, currentY + 14, { width: labelWidth });
+  doc.text(`${formatHtg(total)} HTG`, amountX, currentY + 14, { width: amountWidth, align: 'right' });
+  doc.y = currentY + 52;
+}
+
 export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const dossier = await associateService.getDossierById(req.params.id);
   const pdg = await associateService.getPdgApprover();
   const pdgName = pdg ? `${pdg.firstName} ${pdg.lastName}`.trim() : 'PDG AGRIKIRI';
-  const disbursementLines = Array.isArray(dossier.disbursementLines)
-    ? dossier.disbursementLines.filter(
-        (line: any) => line && typeof line.reason === 'string' && typeof line.amount === 'number'
-      )
-    : [];
-  const totalDisbursement = Number(dossier.disbursementTotal ?? 0);
+  const disbursementLines = normalizeFinancialLines(dossier.disbursementLines);
+  const parsedDescription = parseFinancialDescription(dossier.description);
+  const effectiveFinancialLines = disbursementLines.length > 0 ? disbursementLines : parsedDescription.lines;
+  const totalDisbursement =
+    effectiveFinancialLines.length > 0
+      ? effectiveFinancialLines.reduce((sum, line) => sum + line.amount, 0)
+      : Number(dossier.disbursementTotal ?? 0);
   
   const doc = new PDFDocument({ margin: 50, bufferPages: true });
   const filename = `Dossier_${dossier.id.slice(0, 8)}.pdf`;
@@ -214,77 +295,21 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   doc.y = summaryTop + 76;
 
   drawSectionTitle(doc, 'Résumé du dossier');
-  doc
-    .fontSize(11)
-    .fillColor(PDF_COLORS.text)
-    .text(dossier.description, 50, doc.y, {
-      width: 495,
-      lineGap: 4,
-    });
-  doc.moveDown(1.4);
-
-  if (disbursementLines.length > 0) {
-    drawSectionTitle(doc, 'Tableau de décaissement');
-    const tableX = 50;
-    const motifWidth = 340;
-    const amountX = 410;
-    const rowHeight = 26;
-
-    const headerY = doc.y;
+  const narrative = disbursementLines.length > 0 ? dossier.description : parsedDescription.narrative;
+  if (narrative.trim()) {
     doc
-      .roundedRect(tableX, headerY, 500, rowHeight, 6)
-      .fillAndStroke(PDF_COLORS.brandSoft, PDF_COLORS.line);
-    doc
-      .fillColor(PDF_COLORS.brand)
-      .fontSize(10)
-      .text('Motif', tableX + 12, headerY + 8, { width: motifWidth - 24 });
-    doc
-      .text('Montant (HTG)', amountX + 12, headerY + 8, { width: 128, align: 'right' });
-
-    let currentY = headerY + rowHeight;
-    disbursementLines.forEach((line: any, index: number) => {
-      ensureSpace(doc, 50);
-      if (currentY > doc.page.height - doc.page.margins.bottom - 70) {
-        doc.addPage();
-        currentY = 50;
-        doc
-          .roundedRect(tableX, currentY, 500, rowHeight, 6)
-          .fillAndStroke(PDF_COLORS.brandSoft, PDF_COLORS.line);
-        doc
-          .fillColor(PDF_COLORS.brand)
-          .fontSize(10)
-          .text('Motif', tableX + 12, currentY + 8, { width: motifWidth - 24 });
-        doc
-          .text('Montant (HTG)', amountX + 12, currentY + 8, { width: 128, align: 'right' });
-        currentY += rowHeight;
-      }
-      const bgColor = index % 2 === 0 ? '#ffffff' : '#fbfbf7';
-      doc
-        .roundedRect(tableX, currentY, 500, rowHeight, 4)
-        .fillAndStroke(bgColor, '#ece9df');
-      doc
-        .fillColor(PDF_COLORS.text)
-        .fontSize(10)
-        .text(line.reason, tableX + 12, currentY + 8, { width: motifWidth - 24 });
-      doc
-        .text(formatHtg(line.amount), amountX + 12, currentY + 8, { width: 128, align: 'right' });
-      currentY += rowHeight + 4;
-    });
-
-    doc
-      .roundedRect(tableX, currentY + 4, 500, rowHeight, 6)
-      .fillAndStroke(PDF_COLORS.brandSoft, PDF_COLORS.line);
-    doc
-      .fillColor(PDF_COLORS.brand)
       .fontSize(11)
-      .text('Total', tableX + 12, currentY + 12, { width: motifWidth - 24 });
-    doc
-      .text(formatHtg(totalDisbursement), amountX + 12, currentY + 12, {
-        width: 128,
-        align: 'right',
+      .fillColor(PDF_COLORS.text)
+      .font('Helvetica')
+      .text(narrative, 50, doc.y, {
+        width: 495,
+        lineGap: 4,
       });
+    doc.moveDown(1.2);
+  }
 
-    doc.y = currentY + rowHeight + 24;
+  if (effectiveFinancialLines.length > 0) {
+    drawFinancialTable(doc, effectiveFinancialLines, totalDisbursement);
   }
 
   // Documents
@@ -412,7 +437,6 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const pageRange = doc.bufferedPageRange();
   for (let index = 0; index < pageRange.count; index += 1) {
     doc.switchToPage(pageRange.start + index);
-    drawWatermark(doc);
     renderFooter(index + 1, pageRange.count);
   }
 
