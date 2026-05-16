@@ -135,11 +135,8 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
   const isValidated = dossier.status === 'COMPLETED';
   const approverName = isValidated ? 'PDG AGRIKIRI' : 'Validation en attente';
   const approverRole = isValidated ? 'Direction générale' : 'Document non encore clôturé';
-
-  res.setHeader('Content-disposition', `attachment; filename=${filename}`);
-  res.setHeader('Content-type', 'application/pdf');
-
-  doc.pipe(res);
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
   let currentPageNumber = 1;
 
   const renderFooter = () => {
@@ -405,6 +402,17 @@ export async function exportDossierPdf(req: AuthRequest, res: Response) {
 
   renderFooter();
   doc.end();
+
+  await new Promise<void>((resolve, reject) => {
+    doc.on('end', () => resolve());
+    doc.on('error', (error) => reject(error));
+  });
+
+  const pdfBuffer = Buffer.concat(chunks);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Length', String(pdfBuffer.length));
+  res.send(pdfBuffer);
 }
 
 
