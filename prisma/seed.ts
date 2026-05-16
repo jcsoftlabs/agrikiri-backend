@@ -113,12 +113,13 @@ async function main() {
       update: {
         role: associate.role,
         associateType: associate.associateType,
-        mlmLevel: (associate as any).mlmLevel || MlmLevel.AYIZAN,
+        mlmLevel: (associate as any).mlmLevel || MlmLevel.CUSTOMER,
       },
       create: {
         ...associate,
         phone,
         passwordHash,
+        mlmLevel: (associate as any).mlmLevel || MlmLevel.CUSTOMER,
       },
     });
   }

@@ -3,6 +3,10 @@ import { AuthRequest } from '../../middleware/auth.middleware';
 import * as ordersService from './orders.service';
 import PDFDocument from 'pdfkit';
 
+const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
+const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
+let invoiceLogoCache: Buffer | null = null;
+
 function formatCurrency(amount: number | string | null | undefined) {
   return `${Number(amount || 0).toLocaleString('fr-FR')} HTG`;
 }
@@ -37,6 +41,20 @@ function formatStatus(status?: string | null) {
 function drawKeyValue(doc: any, label: string, value: string) {
   doc.font('Helvetica-Bold').text(label, { continued: true });
   doc.font('Helvetica').text(` ${value}`);
+}
+
+async function getInvoiceLogoBuffer() {
+  if (invoiceLogoCache) return invoiceLogoCache;
+
+  try {
+    const response = await fetch(LOGO_URL);
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    invoiceLogoCache = Buffer.from(arrayBuffer);
+    return invoiceLogoCache;
+  } catch {
+    return null;
+  }
 }
 
 export async function createOrder(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -91,26 +109,31 @@ export async function downloadOrderInvoice(req: AuthRequest, res: Response, next
     const deliveryAddress = (order.deliveryAddress || {}) as Record<string, string | undefined>;
     const filename = `Facture_${order.orderNumber}.pdf`;
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const logoBuffer = await getInvoiceLogoBuffer();
 
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/pdf');
 
     doc.pipe(res);
 
+    if (logoBuffer) {
+      doc.image(logoBuffer, 50, 45, { fit: [120, 50] });
+    }
+
     doc
       .fillColor('#183222')
       .fontSize(24)
       .font('Helvetica-Bold')
-      .text('FACTURE AGRIKIRI');
+      .text('FACTURE AGRIKIRI', logoBuffer ? 190 : 50, 55);
 
     doc
-      .moveUp()
       .fontSize(10)
       .font('Helvetica')
       .fillColor('#6b7280')
-      .text(`Générée le ${new Date().toLocaleString('fr-FR')}`, { align: 'right' });
+      .text(`Générée le ${new Date().toLocaleString('fr-FR')}`, 50, logoBuffer ? 72 : 85, { align: 'right' });
 
-    doc.moveDown(2);
+    doc.y = logoBuffer ? 125 : 115;
+    doc.moveDown(1.2);
 
     doc
       .fillColor('#111827')

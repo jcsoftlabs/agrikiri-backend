@@ -66,7 +66,7 @@ export async function registerUser(data: RegisterInput) {
       lastName,
       sponsorId,
       role: 'CUSTOMER',
-      mlmLevel: 'AYIZAN',
+      mlmLevel: 'CUSTOMER',
     },
     select: {
       id: true,

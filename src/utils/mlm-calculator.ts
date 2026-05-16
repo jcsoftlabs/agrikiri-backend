@@ -6,6 +6,15 @@ import { MlmLevel } from '@prisma/client';
 // ================================
 
 export const MLM_LEVELS = {
+  CUSTOMER: {
+    name: 'Client',
+    monthlyQuotaVP: 0,
+    monthlyCommission: 0,
+    requiredDownline: 0,
+    color: '#6b7280',
+    icon: '🛒',
+    description: 'Acheteur non éligible AYIZAN',
+  },
   AYIZAN: {
     name: 'Ayizan',
     monthlyQuotaVP: 546,

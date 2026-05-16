@@ -125,6 +125,10 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatWeekLabel(index: number) {
+  return `S${index + 1}`;
+}
+
 type ReportFilters = {
   categoryId?: string;
   productId?: string;
@@ -331,12 +335,17 @@ async function getReportData(
 }
 
 export async function getDashboardStats() {
+  const salesHistoryStartDate = new Date();
+  salesHistoryStartDate.setHours(0, 0, 0, 0);
+  salesHistoryStartDate.setDate(salesHistoryStartDate.getDate() - 27);
+
   const [
     totalUsers,
     totalAyizan,
     totalOrders,
     totalSales,
     newUsersMonth,
+    paidOrdersForHistory,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { role: 'AYIZAN' } }),
@@ -349,6 +358,17 @@ export async function getDashboardStats() {
       where: {
         createdAt: { gte: new Date(new Date().setDate(new Date().getDate() - 30)) },
       },
+    }),
+    prisma.order.findMany({
+      where: {
+        paymentStatus: 'PAID',
+        createdAt: { gte: salesHistoryStartDate },
+      },
+      select: {
+        createdAt: true,
+        totalAmount: true,
+      },
+      orderBy: { createdAt: 'asc' },
     }),
   ]);
 
@@ -382,14 +402,28 @@ export async function getDashboardStats() {
     })
   );
 
-  // Évolution ventes (4 dernières semaines)
-  // Note: Simplifié pour l'instant, on pourrait faire un group by plus complexe
-  const salesHistory = [
-    { week: 'S1', ventes: 450000 },
-    { week: 'S2', ventes: 620000 },
-    { week: 'S3', ventes: 540000 },
-    { week: 'S4', ventes: Number(totalSales._sum.totalAmount || 0) / 4 }, // Mock progressif pour l'instant
-  ];
+  // Évolution ventes (4 dernières semaines) — calcul réel à partir des commandes payées
+  const salesHistory = Array.from({ length: 4 }, (_, index) => {
+    const weekStart = new Date(salesHistoryStartDate);
+    weekStart.setDate(salesHistoryStartDate.getDate() + index * 7);
+    weekStart.setHours(0, 0, 0, 0);
+
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+
+    const ventes = paidOrdersForHistory.reduce((sum, order) => {
+      if (order.createdAt >= weekStart && order.createdAt <= weekEnd) {
+        return sum + toNumber(order.totalAmount);
+      }
+      return sum;
+    }, 0);
+
+    return {
+      week: formatWeekLabel(index),
+      ventes,
+    };
+  });
 
   return {
     stats: {
@@ -793,7 +827,7 @@ export async function createUser(data: z.infer<typeof createAdminUserSchema>) {
       role: data.role,
       isActive: data.isActive,
       referralCode,
-      ...(data.role === 'AYIZAN' ? { mlmLevel: 'AYIZAN' } : {}),
+      mlmLevel: data.role === 'AYIZAN' ? 'AYIZAN' : 'CUSTOMER',
     },
     select: adminUserSelect,
   });
@@ -848,6 +882,7 @@ export async function updateUser(
 
   if (data.role && data.role !== 'AYIZAN') {
     updateData.referralCode = null;
+    updateData.mlmLevel = 'CUSTOMER';
   }
 
   return prisma.user.update({

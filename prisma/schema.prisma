@@ -26,6 +26,7 @@ enum AssociateType {
 }
 
 enum MlmLevel {
+  CUSTOMER
   AYIZAN
   GUACANAGARIC
   MACKANDAL
@@ -92,7 +93,7 @@ model User {
   avatarPublicId       String?
   role                 Role      @default(CUSTOMER)
   associateType        AssociateType?
-  mlmLevel             MlmLevel  @default(AYIZAN)
+  mlmLevel             MlmLevel  @default(CUSTOMER)
   sponsorId            String?
   sponsor              User?     @relation("SponsorDownline", fields: [sponsorId], references: [id])
   downline             User[]    @relation("SponsorDownline")
