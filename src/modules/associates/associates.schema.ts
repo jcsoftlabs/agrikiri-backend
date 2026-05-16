@@ -1,8 +1,14 @@
 import { z } from 'zod';
 
+const disbursementLineSchema = z.object({
+  reason: z.string().trim().min(1, 'Le motif est requis').max(160),
+  amount: z.coerce.number().positive('Le montant doit etre superieur a 0').max(100000000),
+});
+
 export const createDossierSchema = z.object({
   title: z.string().min(3).max(100),
   description: z.string().min(10),
+  disbursementLines: z.array(disbursementLineSchema).max(100).optional().default([]),
 });
 
 export const updateDossierStatusSchema = z.object({

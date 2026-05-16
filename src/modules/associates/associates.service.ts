@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { CreateDossierInput, CreateVoteInput, SubmitBallotInput, CreateMessageInput } from './associates.schema';
 import { createError } from '../../middleware/error.middleware';
@@ -45,9 +46,18 @@ export async function getDossierById(id: string) {
 }
 
 export async function createDossier(userId: string, data: CreateDossierInput) {
+  const disbursementLines = (data.disbursementLines ?? []).map((line) => ({
+    reason: line.reason.trim(),
+    amount: Number(line.amount.toFixed(2)),
+  }));
+  const disbursementTotal = disbursementLines.reduce((sum, line) => sum + line.amount, 0);
+
   return prisma.dossier.create({
     data: {
-      ...data,
+      title: data.title,
+      description: data.description,
+      disbursementLines: disbursementLines as Prisma.InputJsonValue,
+      disbursementTotal: new Prisma.Decimal(disbursementTotal.toFixed(2)),
       authorId: userId,
     }
   });

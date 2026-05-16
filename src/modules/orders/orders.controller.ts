@@ -5,6 +5,8 @@ import PDFDocument from 'pdfkit';
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
+const COMPANY_PHONE = '+509 2999-3636';
+const COMPANY_EMAIL = 'infos@agrikiri.com';
 let invoiceLogoCache: Buffer | null = null;
 
 function formatCurrency(amount: number | string | null | undefined) {
@@ -218,6 +220,13 @@ export async function downloadOrderInvoice(req: AuthRequest, res: Response, next
       .fontSize(10)
       .fillColor('#6b7280')
       .text('Merci d’avoir commandé chez AGRIKIRI. Cette facture est fournie à titre de justificatif de commande.', 50, doc.y + 20, {
+        width: 495,
+        align: 'center',
+      });
+    doc
+      .moveDown(1.1)
+      .fontSize(9)
+      .text(`Contact AGRIKIRI : ${COMPANY_PHONE} • ${COMPANY_EMAIL}`, {
         width: 495,
         align: 'center',
       });

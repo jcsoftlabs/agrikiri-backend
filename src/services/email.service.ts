@@ -6,6 +6,8 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || '';
 const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO || '';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
+const COMPANY_PHONE = '+509 2999-3636';
+const COMPANY_EMAIL = 'infos@agrikiri.com';
 
 interface SendEmailInput {
   to: EmailRecipient;
@@ -86,6 +88,11 @@ function wrapEmail(title: string, intro: string, body: string, ctaLabel?: string
         <div style="padding:32px;">
           ${body}
           ${actionBlock}
+          <div style="margin-top:28px;padding-top:18px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:13px;line-height:1.7;">
+            <strong style="color:#183222;">Besoin d’aide ?</strong><br />
+            Téléphone : ${escapeHtml(COMPANY_PHONE)}<br />
+            Email : <a href="mailto:${COMPANY_EMAIL}" style="color:#4b8440;text-decoration:none;">${escapeHtml(COMPANY_EMAIL)}</a>
+          </div>
         </div>
       </div>
     </div>
