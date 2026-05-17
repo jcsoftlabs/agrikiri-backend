@@ -1,7 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
-import { CreateDossierInput, CreateVoteInput, SubmitBallotInput, CreateMessageInput } from './associates.schema';
+import {
+  CreateDossierDecisionInput,
+  CreateDossierInput,
+  CreateVoteInput,
+  SubmitBallotInput,
+  CreateMessageInput,
+} from './associates.schema';
 import { createError } from '../../middleware/error.middleware';
+
+const DOSSIER_VOTE_QUORUM = 3;
 
 // ================================
 // DOSSIERS
@@ -37,12 +45,31 @@ export async function getDossierById(id: string) {
           author: { select: { firstName: true, lastName: true, associateType: true, avatarUrl: true } }
         },
         orderBy: { createdAt: 'desc' }
+      },
+      decisions: {
+        include: {
+          author: { select: { id: true, firstName: true, lastName: true, associateType: true, avatarUrl: true } }
+        },
+        orderBy: { createdAt: 'desc' }
       }
     }
   });
 
   if (!dossier) throw createError('Dossier introuvable', 404);
   return dossier;
+}
+
+function getLatestDecisionByAuthor(decisions: Array<{ authorId: string; action: string; createdAt: Date }>) {
+  const latest = new Map<string, { action: string; createdAt: Date }>();
+  decisions
+    .slice()
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+    .forEach((decision) => {
+      if (!latest.has(decision.authorId)) {
+        latest.set(decision.authorId, { action: decision.action, createdAt: decision.createdAt });
+      }
+    });
+  return Array.from(latest.values());
 }
 
 export async function getPdgApprover() {
@@ -84,6 +111,37 @@ export async function addDossierDocument(dossierId: string, name: string, url: s
   });
 }
 
+export async function createDossierDecision(dossierId: string, authorId: string, data: CreateDossierDecisionInput) {
+  const dossier = await prisma.dossier.findUnique({ where: { id: dossierId } });
+  if (!dossier) throw createError('Dossier introuvable', 404);
+  if (dossier.status === 'COMPLETED') throw createError('Ce dossier est déjà validé', 400);
+
+  const user = await prisma.user.findUnique({
+    where: { id: authorId },
+    select: { role: true, associateType: true },
+  });
+
+  if (!user || (user.role !== 'ASSOCIATE' && user.role !== 'ADMIN')) {
+    throw createError('Accès réservé aux associés', 403);
+  }
+
+  if (user.associateType === 'OBSERVER') {
+    throw createError('Les observateurs peuvent consulter et commenter, mais ne peuvent pas décider', 403);
+  }
+
+  return prisma.dossierDecision.create({
+    data: {
+      dossierId,
+      authorId,
+      action: data.action,
+      note: data.note || null,
+    },
+    include: {
+      author: { select: { id: true, firstName: true, lastName: true, associateType: true, avatarUrl: true } },
+    },
+  });
+}
+
 export async function getDossierComments(dossierId: string) {
   return prisma.dossierComment.findMany({
     where: { dossierId },
@@ -105,6 +163,47 @@ export async function createDossierComment(dossierId: string, authorId: string, 
 
 
 export async function updateDossierStatus(id: string, status: string) {
+  if (status === 'COMPLETED') {
+    const dossier = await prisma.dossier.findUnique({
+      where: { id },
+      include: {
+        votes: {
+          select: {
+            id: true,
+            _count: { select: { ballots: true } },
+          },
+        },
+        decisions: {
+          select: { authorId: true, action: true, createdAt: true },
+        },
+      },
+    });
+
+    if (!dossier) throw createError('Dossier introuvable', 404);
+
+    const latestDecisions = getLatestDecisionByAuthor(dossier.decisions);
+    const hasApproval = latestDecisions.some((decision) => decision.action === 'APPROVE');
+    const hasBlockingDecision = latestDecisions.some((decision) =>
+      ['REJECT', 'REQUEST_CHANGES'].includes(decision.action)
+    );
+
+    if (!hasApproval) {
+      throw createError('Le dossier doit recevoir au moins une approbation associée avant validation finale', 400);
+    }
+
+    if (hasBlockingDecision) {
+      throw createError('Le dossier contient encore un refus ou une demande de correction active', 400);
+    }
+
+    if (dossier.votes.length > 0) {
+      const hasReachedVoteQuorum = dossier.votes.some((vote) => vote._count.ballots >= DOSSIER_VOTE_QUORUM);
+
+      if (!hasReachedVoteQuorum) {
+        throw createError(`Au moins ${DOSSIER_VOTE_QUORUM} votes sont requis lorsqu’une session de vote est liée au dossier`, 400);
+      }
+    }
+  }
+
   return prisma.dossier.update({
     where: { id },
     data: { status }
@@ -158,6 +257,15 @@ export async function submitBallot(voteId: string, userId: string, data: SubmitB
   if (!vote) throw createError('Session de vote introuvable', 404);
   if (!vote.isActive) throw createError('Cette session de vote est clôturée', 400);
   if (vote.expiresAt && new Date() > vote.expiresAt) throw createError('Cette session de vote a expiré', 400);
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, associateType: true },
+  });
+
+  if (!user || (user.associateType !== 'PDG' && user.associateType !== 'VOTING' && user.role !== 'ADMIN')) {
+    throw createError('Vous n’êtes pas habilité à voter', 403);
+  }
 
   return prisma.ballot.upsert({
     where: {

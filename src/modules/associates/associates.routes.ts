@@ -29,6 +29,7 @@ router.post(
 // Commentaires par dossier
 router.get('/dossiers/:id/comments', controller.listDossierComments);
 router.post('/dossiers/:id/comments', controller.postDossierComment);
+router.post('/dossiers/:id/decisions', controller.createDossierDecision);
 
 // Export PDF
 router.get('/dossiers/:id/export', controller.exportDossierPdf);

@@ -15,6 +15,11 @@ export const updateDossierStatusSchema = z.object({
   status: z.enum(['OPEN', 'IN_PROGRESS', 'COMPLETED', 'ARCHIVED']),
 });
 
+export const createDossierDecisionSchema = z.object({
+  action: z.enum(['APPROVE', 'REJECT', 'REQUEST_CHANGES']),
+  note: z.string().trim().max(800).optional(),
+});
+
 export const createVoteSchema = z.object({
   dossierId: z.string().uuid().optional(),
   title: z.string().min(3).max(100),
@@ -32,6 +37,7 @@ export const createMessageSchema = z.object({
 
 export type CreateDossierInput = z.infer<typeof createDossierSchema>;
 export type UpdateDossierStatusInput = z.infer<typeof updateDossierStatusSchema>;
+export type CreateDossierDecisionInput = z.infer<typeof createDossierDecisionSchema>;
 export type CreateVoteInput = z.infer<typeof createVoteSchema>;
 export type SubmitBallotInput = z.infer<typeof submitBallotSchema>;
 export type CreateMessageInput = z.infer<typeof createMessageSchema>;

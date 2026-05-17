@@ -1,7 +1,14 @@
 import { Response } from 'express';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import * as associateService from './associates.service';
-import { createDossierSchema, updateDossierStatusSchema, createVoteSchema, submitBallotSchema, createMessageSchema } from './associates.schema';
+import {
+  createDossierDecisionSchema,
+  createDossierSchema,
+  updateDossierStatusSchema,
+  createVoteSchema,
+  submitBallotSchema,
+  createMessageSchema,
+} from './associates.schema';
 import PDFDocument from 'pdfkit';
 import { createError } from '../../middleware/error.middleware';
 
@@ -502,6 +509,12 @@ export async function addDossierDocument(req: AuthRequest, res: Response) {
     (req.file as any).path
   );
   res.status(201).json({ success: true, data: doc });
+}
+
+export async function createDossierDecision(req: AuthRequest, res: Response) {
+  const data = createDossierDecisionSchema.parse(req.body);
+  const decision = await associateService.createDossierDecision(req.params.id, req.user!.userId, data);
+  res.status(201).json({ success: true, data: decision });
 }
 
 export async function listDossierComments(req: AuthRequest, res: Response) {

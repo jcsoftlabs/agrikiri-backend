@@ -118,6 +118,7 @@ model User {
   
   // Relations Associés
   createdDossiers      Dossier[]       @relation("DossierAuthor")
+  dossierDecisions     DossierDecision[]
   ballots              Ballot[]
   sentMessages         InternalMessage[]
   dossierComments      DossierComment[]
@@ -365,10 +366,25 @@ model Dossier {
   documents   DossierDocument[]
   votes       Vote[]
   comments    DossierComment[]
+  decisions   DossierDecision[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
 
+  @@index([authorId])
+}
+
+model DossierDecision {
+  id        String   @id @default(uuid())
+  dossierId String
+  dossier   Dossier  @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  action    String   // APPROVE, REJECT, REQUEST_CHANGES
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([dossierId])
   @@index([authorId])
 }
 
