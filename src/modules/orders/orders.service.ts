@@ -225,6 +225,19 @@ function calculateDeliveryFee(subtotalAmount: number, deliveryAddress: z.infer<t
   return Number((subtotalAmount * 0.1).toFixed(2));
 }
 
+function resolveTieredUnitPrice(
+  basePrice: number,
+  quantity: number,
+  pricingTiers: Array<{ minQuantity: number; maxQuantity: number | null; price: unknown }> = []
+) {
+  const matchedTier = pricingTiers
+    .slice()
+    .sort((a, b) => a.minQuantity - b.minQuantity)
+    .find((tier) => quantity >= tier.minQuantity && (tier.maxQuantity == null || quantity <= tier.maxQuantity));
+
+  return matchedTier ? Number(matchedTier.price) : basePrice;
+}
+
 // ================================
 // CREATE ORDER
 // ================================
@@ -253,6 +266,11 @@ export async function createOrder(
       stockQuantity: number;
       isDefault: boolean;
       productId: string;
+      pricingTiers: {
+        minQuantity: number;
+        maxQuantity: number | null;
+        price: any;
+      }[];
     } | null = null;
 
     if (item.productVariantId) {
@@ -261,6 +279,11 @@ export async function createOrder(
           id: item.productVariantId,
           productId: item.productId,
           isActive: true,
+        },
+        include: {
+          pricingTiers: {
+            orderBy: { sortOrder: 'asc' },
+          },
         },
       });
 
@@ -281,7 +304,9 @@ export async function createOrder(
       );
     }
 
-    const unitPrice = selectedVariant ? selectedVariant.price : product.price;
+    const unitPrice = selectedVariant
+      ? resolveTieredUnitPrice(Number(selectedVariant.price), item.quantity, selectedVariant.pricingTiers)
+      : Number(product.price);
     const unitVP = selectedVariant ? selectedVariant.vpPoints : product.vpPoints;
     const itemTotal = Number(unitPrice) * item.quantity;
     const itemVP = Number(unitVP) * item.quantity;

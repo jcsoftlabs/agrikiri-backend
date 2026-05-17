@@ -6,8 +6,21 @@ import { createError } from '../../middleware/error.middleware';
 const productInclude = {
   category: { select: { id: true, name: true, slug: true } },
   images: { orderBy: { order: 'asc' as const } },
-  variants: { orderBy: { sortOrder: 'asc' as const } },
+  variants: {
+    orderBy: { sortOrder: 'asc' as const },
+    include: {
+      pricingTiers: { orderBy: { sortOrder: 'asc' as const } },
+    },
+  },
 } as const;
+
+const productVariantPricingTierSchema = z.object({
+  id: z.string().uuid().optional(),
+  minQuantity: z.number().int().positive('La quantite minimum doit etre positive'),
+  maxQuantity: z.number().int().positive('La quantite maximum doit etre positive').nullable().optional(),
+  price: z.number().positive('Le prix du palier doit etre positif'),
+  sortOrder: z.number().int().min(0).optional(),
+});
 
 const productVariantSchema = z.object({
   id: z.string().uuid().optional(),
@@ -18,6 +31,7 @@ const productVariantSchema = z.object({
   vpPoints: z.number().positive('Points VP doivent etre positifs'),
   isActive: z.boolean().optional().default(true),
   sortOrder: z.number().int().min(0).optional(),
+  pricingTiers: z.array(productVariantPricingTierSchema).optional().default([]),
 });
 
 const baseProductSchema = z.object({
@@ -63,8 +77,16 @@ export const createProductSchema = baseProductSchema.superRefine((data, ctx) => 
 export const updateProductSchema = baseProductSchema.partial();
 
 type ProductVariantInput = z.infer<typeof productVariantSchema>;
+type ProductVariantPricingTierInput = z.infer<typeof productVariantPricingTierSchema>;
 type CreateProductInput = z.infer<typeof createProductSchema>;
 type UpdateProductInput = z.infer<typeof updateProductSchema>;
+type NormalizedProductVariantPricingTier = {
+  id?: string;
+  minQuantity: number;
+  maxQuantity: number | null;
+  price: number;
+  sortOrder: number;
+};
 type NormalizedProductVariant = {
   id?: string;
   label: string;
@@ -74,6 +96,7 @@ type NormalizedProductVariant = {
   vpPoints: number;
   isActive: boolean;
   sortOrder: number;
+  pricingTiers: NormalizedProductVariantPricingTier[];
 };
 
 function slugify(value: string) {
@@ -106,7 +129,50 @@ function buildLegacyVariant(data: {
     vpPoints: data.vpPoints,
     isActive: true,
     sortOrder: 0,
+    pricingTiers: [],
   };
+}
+
+function normalizePricingTiers(basePrice: number, pricingTiers: ProductVariantPricingTierInput[] = []) {
+  if (!pricingTiers.length) {
+    return [];
+  }
+
+  const normalized = pricingTiers
+    .map((tier, index) => ({
+      id: tier.id,
+      minQuantity: tier.minQuantity,
+      maxQuantity: tier.maxQuantity ?? null,
+      price: tier.price,
+      sortOrder: tier.sortOrder ?? index,
+    }))
+    .sort((a, b) => a.minQuantity - b.minQuantity || a.sortOrder - b.sortOrder)
+    .map((tier, index) => ({ ...tier, sortOrder: index }));
+
+  normalized.forEach((tier, index) => {
+    if (tier.maxQuantity !== null && tier.maxQuantity < tier.minQuantity) {
+      throw createError('Chaque palier doit avoir une quantite maximum superieure ou egale a la quantite minimum.', 400);
+    }
+
+    if (tier.price >= basePrice) {
+      throw createError('Le prix d’un palier doit etre inferieur au prix unitaire de base.', 400);
+    }
+
+    if (index > 0) {
+      const previousTier = normalized[index - 1];
+      const previousMax = previousTier.maxQuantity;
+
+      if (previousMax === null) {
+        throw createError('Le dernier palier ouvert doit etre le seul sans maximum.', 400);
+      }
+
+      if (tier.minQuantity <= previousMax) {
+        throw createError('Les paliers de quantite ne doivent pas se chevaucher.', 400);
+      }
+    }
+  });
+
+  return normalized;
 }
 
 function normalizeVariants(data: {
@@ -123,6 +189,7 @@ function normalizeVariants(data: {
           ...variant,
           isActive: variant.isActive ?? true,
           sortOrder: variant.sortOrder ?? index,
+          pricingTiers: normalizePricingTiers(variant.price, variant.pricingTiers),
         }))
       : buildLegacyVariant(data)
         ? [buildLegacyVariant(data)!]
@@ -141,6 +208,7 @@ function normalizeVariants(data: {
     ...variant,
     isActive: variant.isActive ?? true,
     sortOrder: index,
+    pricingTiers: variant.pricingTiers ?? [],
   }));
 }
 
@@ -211,10 +279,11 @@ export async function getProducts(filters: {
       orderBy: { [sortBy]: sortOrder },
       include: {
         ...productInclude,
-        variants: {
-          where: adminMode ? {} : { isActive: true },
-          orderBy: { sortOrder: 'asc' },
-        },
+      variants: {
+        where: adminMode ? {} : { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+        include: { pricingTiers: { orderBy: { sortOrder: 'asc' } } },
+      },
       },
     }),
     prisma.product.count({ where }),
@@ -246,6 +315,7 @@ export async function getProductBySlug(slug: string) {
       variants: {
         where: { isActive: true },
         orderBy: { sortOrder: 'asc' },
+        include: { pricingTiers: { orderBy: { sortOrder: 'asc' } } },
       },
     },
   });
@@ -291,6 +361,14 @@ export async function createProduct(data: CreateProductInput) {
           isActive: variant.isActive,
           isDefault: index === 0,
           sortOrder: index,
+          pricingTiers: {
+            create: variant.pricingTiers.map((tier, tierIndex) => ({
+              minQuantity: tier.minQuantity,
+              maxQuantity: tier.maxQuantity,
+              price: tier.price,
+              sortOrder: tierIndex,
+            })),
+          },
         })),
       },
     },
@@ -354,6 +432,20 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
               sortOrder: index,
             },
           });
+          await tx.productVariantPricingTier.deleteMany({
+            where: { productVariantId: updatedVariant.id },
+          });
+          if (variant.pricingTiers.length > 0) {
+            await tx.productVariantPricingTier.createMany({
+              data: variant.pricingTiers.map((tier, tierIndex) => ({
+                productVariantId: updatedVariant.id,
+                minQuantity: tier.minQuantity,
+                maxQuantity: tier.maxQuantity,
+                price: tier.price,
+                sortOrder: tierIndex,
+              })),
+            });
+          }
           savedVariantIds.push(updatedVariant.id);
         } else {
           const createdVariant = await tx.productVariant.create({
@@ -367,6 +459,14 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
               isActive: variant.isActive,
               isDefault: false,
               sortOrder: index,
+              pricingTiers: {
+                create: variant.pricingTiers.map((tier, tierIndex) => ({
+                  minQuantity: tier.minQuantity,
+                  maxQuantity: tier.maxQuantity,
+                  price: tier.price,
+                  sortOrder: tierIndex,
+                })),
+              },
             },
           });
           savedVariantIds.push(createdVariant.id);

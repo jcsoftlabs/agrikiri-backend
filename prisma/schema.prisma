@@ -200,9 +200,25 @@ model ProductVariant {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   orderItems    OrderItem[]
+  pricingTiers  ProductVariantPricingTier[]
 
   @@index([productId])
   @@index([productId, isActive])
+}
+
+model ProductVariantPricingTier {
+  id               String         @id @default(uuid())
+  productVariantId String
+  productVariant   ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Cascade)
+  minQuantity      Int
+  maxQuantity      Int?
+  price            Decimal        @db.Decimal(10, 2)
+  sortOrder        Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([productVariantId])
+  @@index([productVariantId, sortOrder])
 }
 
 model ProductImage {
