@@ -32,7 +32,11 @@ export const submitBallotSchema = z.object({
 });
 
 export const createMessageSchema = z.object({
-  content: z.string().min(1).max(1000),
+  content: z
+    .string()
+    .trim()
+    .min(1, 'Le message ne peut pas etre vide.')
+    .max(1000, 'Le message ne peut pas depasser 1000 caracteres.'),
 });
 
 export type CreateDossierInput = z.infer<typeof createDossierSchema>;
