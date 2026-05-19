@@ -123,6 +123,7 @@ model User {
   notifications        Notification[]
   addresses            CustomerAddress[]
   assignedDeliveries   Order[]         @relation("AssignedDeliveryAgent")
+  deliveryAgentReports DeliveryAgentReport[] @relation("DeliveryAgentReports")
   buyerAllocations     BuyerAllocation[] @relation("BuyerAllocations")
   allocatedBuyerFunds  BuyerAllocation[] @relation("BuyerAllocatedBy")
   buyerExpenseReports  BuyerExpenseReport[]
@@ -375,6 +376,27 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+model DeliveryAgentReport {
+  id             String   @id @default(uuid())
+  deliveryAgentId String
+  deliveryAgent   User     @relation("DeliveryAgentReports", fields: [deliveryAgentId], references: [id])
+  title          String
+  shiftDate      DateTime
+  summary        String
+  totalAssigned  Int      @default(0)
+  deliveredCount Int      @default(0)
+  failedCount    Int      @default(0)
+  cashCollected  Decimal  @default(0) @db.Decimal(10, 2)
+  fieldExpenses  Decimal  @default(0) @db.Decimal(10, 2)
+  incidents      String?
+  nextActions    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([deliveryAgentId, createdAt])
+  @@index([shiftDate])
 }
 
 model BuyerAllocation {
