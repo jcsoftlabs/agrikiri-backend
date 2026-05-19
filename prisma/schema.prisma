@@ -111,6 +111,18 @@ enum PosCustomerType {
   BUSINESS
 }
 
+enum DeliveryNoteSourceType {
+  ORDER
+  POS_SALE
+}
+
+enum DeliveryNoteStatus {
+  PREPARED
+  IN_TRANSIT
+  DELIVERED
+  CANCELLED
+}
+
 // ================================
 // MODELS
 // ================================
@@ -148,6 +160,7 @@ model User {
   notifications        Notification[]
   addresses            CustomerAddress[]
   assignedDeliveries   Order[]         @relation("AssignedDeliveryAgent")
+  assignedDeliveryNotes DeliveryNote[] @relation("DeliveryNoteAssignedAgent")
   deliveryAgentReports DeliveryAgentReport[] @relation("DeliveryAgentReports")
   buyerAllocations     BuyerAllocation[] @relation("BuyerAllocations")
   allocatedBuyerFunds  BuyerAllocation[] @relation("BuyerAllocatedBy")
@@ -155,6 +168,7 @@ model User {
   buyerFundRequests    BuyerFundRequest[] @relation("BuyerFundRequestOwner")
   reviewedFundRequests BuyerFundRequest[] @relation("BuyerFundRequestReviewer")
   posSalesCreated      PosSale[]       @relation("PosSaleCreator")
+  createdDeliveryNotes DeliveryNote[]  @relation("DeliveryNoteCreatedBy")
   
   // Relations Associés
   createdDossiers      Dossier[]       @relation("DossierAuthor")
@@ -221,6 +235,7 @@ model Product {
   updatedAt     DateTime       @updatedAt
   orderItems    OrderItem[]
   posSaleItems  PosSaleItem[]
+  deliveryNoteItems DeliveryNoteItem[]
 
   @@index([categoryId])
   @@index([slug])
@@ -243,6 +258,7 @@ model ProductVariant {
   orderItems    OrderItem[]
   pricingTiers  ProductVariantPricingTier[]
   posSaleItems  PosSaleItem[]
+  deliveryNoteItems DeliveryNoteItem[]
 
   @@index([productId])
   @@index([productId, isActive])
@@ -312,6 +328,7 @@ model Order {
   deliveredLocationAccuracy Decimal? @db.Decimal(10, 2)
   deliveryProofCapturedAt DateTime?
   items           OrderItem[]
+  deliveryNotes   DeliveryNote[]
   commissions     Commission[]
   trackingEvents  OrderTrackingEvent[]
   createdAt       DateTime      @default(now())
@@ -347,6 +364,7 @@ model OrderItem {
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
   vpPoints  Decimal @db.Decimal(10, 2)
+  deliveryNoteItems DeliveryNoteItem[]
 
   @@index([orderId])
   @@index([productVariantId])
@@ -372,6 +390,7 @@ model PosSale {
   createdById     String
   createdBy       User            @relation("PosSaleCreator", fields: [createdById], references: [id])
   items           PosSaleItem[]
+  deliveryNotes   DeliveryNote[]
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -392,8 +411,65 @@ model PosSaleItem {
   quantity         Int
   unitPrice        Decimal         @db.Decimal(10, 2)
   lineTotal        Decimal         @db.Decimal(10, 2)
+  deliveryNoteItems DeliveryNoteItem[]
 
   @@index([posSaleId])
+  @@index([productId])
+  @@index([productVariantId])
+}
+
+model DeliveryNote {
+  id               String                 @id @default(uuid())
+  noteNumber       String                 @unique
+  sourceType       DeliveryNoteSourceType
+  orderId          String?
+  order            Order?                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  posSaleId        String?
+  posSale          PosSale?               @relation(fields: [posSaleId], references: [id], onDelete: Cascade)
+  deliveryAgentId  String?
+  deliveryAgent    User?                  @relation("DeliveryNoteAssignedAgent", fields: [deliveryAgentId], references: [id])
+  createdById      String
+  createdBy        User                   @relation("DeliveryNoteCreatedBy", fields: [createdById], references: [id])
+  status           DeliveryNoteStatus     @default(PREPARED)
+  customerName     String
+  customerPhone    String?
+  customerAddress  String?
+  notes            String?
+  totalQuantity    Int                    @default(0)
+  totalWeightLbs   Decimal                @default(0) @db.Decimal(10, 2)
+  deliveredAt      DateTime?
+  items            DeliveryNoteItem[]
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  @@index([orderId])
+  @@index([posSaleId])
+  @@index([deliveryAgentId, status])
+  @@index([sourceType, createdAt])
+}
+
+model DeliveryNoteItem {
+  id               String          @id @default(uuid())
+  deliveryNoteId   String
+  deliveryNote     DeliveryNote    @relation(fields: [deliveryNoteId], references: [id], onDelete: Cascade)
+  orderItemId      String?
+  orderItem        OrderItem?      @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+  posSaleItemId    String?
+  posSaleItem      PosSaleItem?    @relation(fields: [posSaleItemId], references: [id], onDelete: SetNull)
+  productId        String
+  product          Product         @relation(fields: [productId], references: [id])
+  productVariantId String?
+  productVariant   ProductVariant? @relation(fields: [productVariantId], references: [id])
+  description      String
+  orderedQuantity  Int
+  deliveredQuantity Int
+  remainingQuantity Int
+  unitWeightLbs    Decimal         @default(0) @db.Decimal(10, 2)
+  lineWeightLbs    Decimal         @default(0) @db.Decimal(10, 2)
+
+  @@index([deliveryNoteId])
+  @@index([orderItemId])
+  @@index([posSaleItemId])
   @@index([productId])
   @@index([productVariantId])
 }

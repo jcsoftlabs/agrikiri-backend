@@ -11,7 +11,11 @@ const COMPANY_EMAIL = 'infos@agrikiri.com';
 let posLogoCache: Buffer | null = null;
 
 function formatCurrency(amount: number | string | null | undefined) {
-  return `${Number(amount || 0).toLocaleString('fr-FR')} HTG`;
+  const value = Number(amount || 0);
+  const fixed = Number.isFinite(value) ? value.toFixed(2) : '0.00';
+  const [integerPart, decimalPart] = fixed.split('.');
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  return `${groupedInteger},${decimalPart} HTG`;
 }
 
 function formatDocumentTitle(type: 'RECEIPT' | 'INVOICE' | 'PROFORMA') {

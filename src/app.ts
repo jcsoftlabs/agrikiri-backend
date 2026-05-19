@@ -22,6 +22,7 @@ import associatesRoutes from './modules/associates/associates.routes';
 import buyersRoutes from './modules/buyers/buyers.routes';
 import deliveryReportsRoutes from './modules/delivery-reports/delivery-reports.routes';
 import posRoutes from './modules/pos/pos.routes';
+import deliveryNotesRoutes from './modules/delivery-notes/delivery-notes.routes';
 
 
 const app = express();
@@ -106,6 +107,7 @@ app.use('/api/associates', associatesRoutes);
 app.use('/api/buyers', buyersRoutes);
 app.use('/api/delivery-reports', deliveryReportsRoutes);
 app.use('/api/pos', posRoutes);
+app.use('/api/delivery-notes', deliveryNotesRoutes);
 
 
 // ================================
