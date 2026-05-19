@@ -21,6 +21,7 @@ import adminRoutes from './modules/admin/admin.routes';
 import associatesRoutes from './modules/associates/associates.routes';
 import buyersRoutes from './modules/buyers/buyers.routes';
 import deliveryReportsRoutes from './modules/delivery-reports/delivery-reports.routes';
+import posRoutes from './modules/pos/pos.routes';
 
 
 const app = express();
@@ -104,6 +105,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/associates', associatesRoutes);
 app.use('/api/buyers', buyersRoutes);
 app.use('/api/delivery-reports', deliveryReportsRoutes);
+app.use('/api/pos', posRoutes);
 
 
 // ================================
