@@ -4,6 +4,7 @@ export const createBuyerAllocationSchema = z.object({
   buyerId: z.string().uuid('Acheteur invalide'),
   title: z.string().trim().min(3, 'Le libellé est requis').max(120, 'Le libellé est trop long'),
   description: z.string().trim().max(500, 'La note est trop longue').optional(),
+  fundRequestId: z.string().uuid('Demande de fonds invalide').optional(),
   amountAllocated: z.coerce
     .number()
     .positive('Le montant alloué doit être supérieur à 0')
@@ -22,5 +23,15 @@ export const createBuyerExpenseReportSchema = z.object({
   lines: z.array(buyerExpenseLineSchema).min(1, 'Ajoutez au moins une ligne').max(100),
 });
 
+export const createBuyerFundRequestSchema = z.object({
+  title: z.string().trim().min(3, 'Le titre est requis').max(120, 'Le titre est trop long'),
+  justification: z.string().trim().min(20, 'Expliquez mieux le besoin de fonds').max(1500, 'La justification est trop longue'),
+  amountRequested: z.coerce
+    .number()
+    .positive('Le montant demandé doit être supérieur à 0')
+    .max(100000000, 'Le montant demandé est trop élevé'),
+});
+
 export type CreateBuyerAllocationInput = z.infer<typeof createBuyerAllocationSchema>;
 export type CreateBuyerExpenseReportInput = z.infer<typeof createBuyerExpenseReportSchema>;
+export type CreateBuyerFundRequestInput = z.infer<typeof createBuyerFundRequestSchema>;

@@ -1,7 +1,7 @@
-import { BuyerAllocationStatus, Prisma } from '@prisma/client';
+import { BuyerAllocationStatus, BuyerFundRequestStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { createError } from '../../middleware/error.middleware';
-import { CreateBuyerAllocationInput, CreateBuyerExpenseReportInput } from './buyers.schema';
+import { CreateBuyerAllocationInput, CreateBuyerExpenseReportInput, CreateBuyerFundRequestInput } from './buyers.schema';
 
 function toNumber(value: Prisma.Decimal | number | string | null | undefined) {
   const parsed = Number(value ?? 0);
@@ -31,6 +31,11 @@ const buyerAllocationInclude = {
     },
     orderBy: { createdAt: 'desc' as const },
   },
+} as const;
+
+const buyerFundRequestInclude = {
+  buyer: { select: buyerPersonSelect },
+  reviewedBy: { select: buyerPersonSelect },
 } as const;
 
 function serializeReport(report: any) {
@@ -66,6 +71,13 @@ function serializeAllocation(allocation: any) {
     totalReported,
     remainingAmount,
     reports,
+  };
+}
+
+function serializeFundRequest(request: any) {
+  return {
+    ...request,
+    amountRequested: toNumber(request.amountRequested),
   };
 }
 
@@ -115,43 +127,107 @@ export async function createAllocation(allocatedById: string, data: CreateBuyerA
     throw createError('Cet acheteur est introuvable ou inactif', 404);
   }
 
-  const allocation = await prisma.buyerAllocation.create({
-    data: {
-      buyerId: data.buyerId,
-      allocatedById,
-      title: data.title.trim(),
-      description: data.description?.trim() || null,
-      amountAllocated: new Prisma.Decimal(roundMoney(data.amountAllocated).toFixed(2)),
-    },
-    include: buyerAllocationInclude,
+  if (data.fundRequestId) {
+    const request = await prisma.buyerFundRequest.findFirst({
+      where: {
+        id: data.fundRequestId,
+        buyerId: data.buyerId,
+      },
+      select: { id: true, status: true },
+    });
+
+    if (!request) {
+      throw createError('Demande de fonds introuvable pour cet acheteur', 404);
+    }
+
+    if (request.status !== BuyerFundRequestStatus.PENDING) {
+      throw createError('Cette demande de fonds a déjà été traitée', 400);
+    }
+  }
+
+  const allocation = await prisma.$transaction(async (tx) => {
+    const created = await tx.buyerAllocation.create({
+      data: {
+        buyerId: data.buyerId,
+        allocatedById,
+        title: data.title.trim(),
+        description: data.description?.trim() || null,
+        amountAllocated: new Prisma.Decimal(roundMoney(data.amountAllocated).toFixed(2)),
+      },
+      include: buyerAllocationInclude,
+    });
+
+    if (data.fundRequestId) {
+      await tx.buyerFundRequest.update({
+        where: { id: data.fundRequestId },
+        data: {
+          status: BuyerFundRequestStatus.FULFILLED,
+          reviewedById: allocatedById,
+          reviewedAt: new Date(),
+          reviewNote: 'Demande couverte par une allocation envoyée.',
+        },
+      });
+    }
+
+    return created;
   });
 
   return serializeAllocation(allocation);
 }
 
+export async function createFundRequest(buyerId: string, data: CreateBuyerFundRequestInput) {
+  const buyer = await prisma.user.findFirst({
+    where: { id: buyerId, role: 'BUYER', isActive: true },
+    select: { id: true },
+  });
+
+  if (!buyer) {
+    throw createError('Acheteur introuvable', 404);
+  }
+
+  const request = await prisma.buyerFundRequest.create({
+    data: {
+      buyerId,
+      title: data.title.trim(),
+      justification: data.justification.trim(),
+      amountRequested: new Prisma.Decimal(roundMoney(data.amountRequested).toFixed(2)),
+    },
+    include: buyerFundRequestInclude,
+  });
+
+  return serializeFundRequest(request);
+}
+
 export async function getBoardOverview() {
-  const [buyers, allocations] = await Promise.all([
+  const [buyers, allocations, fundRequests] = await Promise.all([
     getBuyerOptions(),
     prisma.buyerAllocation.findMany({
       include: buyerAllocationInclude,
       orderBy: [{ createdAt: 'desc' }],
     }),
+    prisma.buyerFundRequest.findMany({
+      include: buyerFundRequestInclude,
+      orderBy: [{ createdAt: 'desc' }],
+    }),
   ]);
 
   const serializedAllocations = allocations.map(serializeAllocation);
+  const serializedRequests = fundRequests.map(serializeFundRequest);
 
   return {
     buyers,
     overview: {
       ...buildOverview(serializedAllocations),
       totalBuyers: buyers.length,
+      pendingRequests: serializedRequests.filter((request) => request.status === 'PENDING').length,
     },
     allocations: serializedAllocations,
+    fundRequests: serializedRequests,
   };
 }
 
 export async function getBuyerDashboard(buyerId: string) {
-  const [buyer, allocations] = await Promise.all([
+  const [buyer, allocations, fundRequests] = await Promise.all([
     prisma.user.findFirst({
       where: {
         id: buyerId,
@@ -163,6 +239,11 @@ export async function getBuyerDashboard(buyerId: string) {
     prisma.buyerAllocation.findMany({
       where: { buyerId },
       include: buyerAllocationInclude,
+      orderBy: [{ createdAt: 'desc' }],
+    }),
+    prisma.buyerFundRequest.findMany({
+      where: { buyerId },
+      include: buyerFundRequestInclude,
       orderBy: [{ createdAt: 'desc' }],
     }),
   ]);
@@ -177,6 +258,7 @@ export async function getBuyerDashboard(buyerId: string) {
     buyer,
     overview: buildOverview(serializedAllocations),
     allocations: serializedAllocations,
+    fundRequests: fundRequests.map(serializeFundRequest),
   };
 }
 
@@ -304,4 +386,32 @@ export async function createExpenseReport(
   });
 
   return serializeReport(report);
+}
+
+export async function declineFundRequest(requestId: string, reviewerId: string, reviewNote?: string) {
+  const request = await prisma.buyerFundRequest.findUnique({
+    where: { id: requestId },
+    include: buyerFundRequestInclude,
+  });
+
+  if (!request) {
+    throw createError('Demande de fonds introuvable', 404);
+  }
+
+  if (request.status !== BuyerFundRequestStatus.PENDING) {
+    throw createError('Cette demande a déjà été traitée', 400);
+  }
+
+  const updated = await prisma.buyerFundRequest.update({
+    where: { id: requestId },
+    data: {
+      status: BuyerFundRequestStatus.DECLINED,
+      reviewedById: reviewerId,
+      reviewedAt: new Date(),
+      reviewNote: reviewNote?.trim() || null,
+    },
+    include: buyerFundRequestInclude,
+  });
+
+  return serializeFundRequest(updated);
 }

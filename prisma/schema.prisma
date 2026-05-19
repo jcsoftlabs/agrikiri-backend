@@ -87,6 +87,12 @@ enum BuyerAllocationStatus {
   REPORTED
 }
 
+enum BuyerFundRequestStatus {
+  PENDING
+  FULFILLED
+  DECLINED
+}
+
 enum PosDocumentType {
   RECEIPT
   INVOICE
@@ -146,6 +152,8 @@ model User {
   buyerAllocations     BuyerAllocation[] @relation("BuyerAllocations")
   allocatedBuyerFunds  BuyerAllocation[] @relation("BuyerAllocatedBy")
   buyerExpenseReports  BuyerExpenseReport[]
+  buyerFundRequests    BuyerFundRequest[] @relation("BuyerFundRequestOwner")
+  reviewedFundRequests BuyerFundRequest[] @relation("BuyerFundRequestReviewer")
   posSalesCreated      PosSale[]       @relation("PosSaleCreator")
   
   // Relations Associés
@@ -517,6 +525,26 @@ model BuyerExpenseLine {
   lineAmount  Decimal           @db.Decimal(10, 2)
 
   @@index([reportId, sortOrder])
+}
+
+model BuyerFundRequest {
+  id              String                 @id @default(uuid())
+  buyerId         String
+  buyer           User                   @relation("BuyerFundRequestOwner", fields: [buyerId], references: [id])
+  title           String
+  justification   String
+  amountRequested Decimal                @db.Decimal(10, 2)
+  status          BuyerFundRequestStatus @default(PENDING)
+  reviewNote      String?
+  reviewedById    String?
+  reviewedBy      User?                  @relation("BuyerFundRequestReviewer", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([buyerId, status])
+  @@index([status, createdAt])
+  @@index([reviewedById])
 }
 
 // ================================

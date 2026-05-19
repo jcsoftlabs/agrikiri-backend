@@ -14,7 +14,9 @@ router.get('/board/overview', requireAssociate, asyncHandler(controller.getBoard
 router.post('/allocations', requirePdg, asyncHandler(controller.createAllocation));
 
 router.get('/my/dashboard', requireBuyer, asyncHandler(controller.getMyDashboard));
+router.post('/my/fund-requests', requireBuyer, asyncHandler(controller.createFundRequest));
 router.post('/allocations/:id/confirm', requireBuyer, asyncHandler(controller.confirmReceipt));
 router.post('/allocations/:id/reports', requireBuyer, asyncHandler(controller.submitExpenseReport));
+router.post('/fund-requests/:id/decline', requirePdg, asyncHandler(controller.declineFundRequest));
 
 export default router;
