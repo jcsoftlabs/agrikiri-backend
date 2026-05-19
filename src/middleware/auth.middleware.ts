@@ -72,6 +72,15 @@ export function requireAssociate(req: AuthRequest, res: Response, next: NextFunc
   next();
 }
 
+export function requireBuyer(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'BUYER' && req.user.role !== 'ADMIN')) {
+    res.status(403).json({ success: false, message: 'Accès réservé aux acheteurs terrain' });
+    return;
+  }
+
+  next();
+}
+
 export function requirePdg(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user || (req.user.associateType !== 'PDG' && req.user.role !== 'ADMIN')) {
     res.status(403).json({ success: false, message: 'Accès réservé au PDG' });
@@ -80,4 +89,3 @@ export function requirePdg(req: AuthRequest, res: Response, next: NextFunction):
 
   next();
 }
-

@@ -14,6 +14,7 @@ datasource db {
 enum Role {
   CUSTOMER
   AYIZAN
+  BUYER
   DELIVERY_AGENT
   ADMIN
   ASSOCIATE
@@ -78,6 +79,13 @@ enum CommissionStatus {
   PAID
 }
 
+enum BuyerAllocationStatus {
+  PENDING_CONFIRMATION
+  ACTIVE
+  PARTIALLY_REPORTED
+  REPORTED
+}
+
 // ================================
 // MODELS
 // ================================
@@ -115,6 +123,9 @@ model User {
   notifications        Notification[]
   addresses            CustomerAddress[]
   assignedDeliveries   Order[]         @relation("AssignedDeliveryAgent")
+  buyerAllocations     BuyerAllocation[] @relation("BuyerAllocations")
+  allocatedBuyerFunds  BuyerAllocation[] @relation("BuyerAllocatedBy")
+  buyerExpenseReports  BuyerExpenseReport[]
   
   // Relations Associés
   createdDossiers      Dossier[]       @relation("DossierAuthor")
@@ -364,6 +375,58 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+model BuyerAllocation {
+  id                String                @id @default(uuid())
+  buyerId           String
+  buyer             User                  @relation("BuyerAllocations", fields: [buyerId], references: [id])
+  allocatedById     String
+  allocatedBy       User                  @relation("BuyerAllocatedBy", fields: [allocatedById], references: [id])
+  title             String
+  description       String?
+  amountAllocated   Decimal               @db.Decimal(10, 2)
+  status            BuyerAllocationStatus @default(PENDING_CONFIRMATION)
+  receivedConfirmedAt DateTime?
+  reports           BuyerExpenseReport[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@index([buyerId, status])
+  @@index([allocatedById])
+}
+
+model BuyerExpenseReport {
+  id              String            @id @default(uuid())
+  allocationId    String
+  allocation      BuyerAllocation   @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+  buyerId         String
+  buyer           User              @relation(fields: [buyerId], references: [id])
+  summary         String?
+  totalSpent      Decimal           @default(0) @db.Decimal(10, 2)
+  totalFees       Decimal           @default(0) @db.Decimal(10, 2)
+  totalReported   Decimal           @default(0) @db.Decimal(10, 2)
+  remainingAmount Decimal           @default(0) @db.Decimal(10, 2)
+  lines           BuyerExpenseLine[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([allocationId, createdAt])
+  @@index([buyerId])
+}
+
+model BuyerExpenseLine {
+  id          String            @id @default(uuid())
+  reportId    String
+  report      BuyerExpenseReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  sortOrder   Int               @default(0)
+  description String
+  quantity    Decimal           @db.Decimal(10, 2)
+  unitPrice   Decimal           @db.Decimal(10, 2)
+  fees        Decimal           @default(0) @db.Decimal(10, 2)
+  lineAmount  Decimal           @db.Decimal(10, 2)
+
+  @@index([reportId, sortOrder])
 }
 
 // ================================
