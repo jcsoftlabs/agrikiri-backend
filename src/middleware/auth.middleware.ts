@@ -63,6 +63,15 @@ export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction
   next();
 }
 
+export function requirePosAccess(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'CASHIER')) {
+    res.status(403).json({ success: false, message: 'Accès réservé aux administrateurs et caissiers' });
+    return;
+  }
+
+  next();
+}
+
 export function requireAssociate(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user || (req.user.role !== 'ASSOCIATE' && req.user.role !== 'ADMIN')) {
     res.status(403).json({ success: false, message: 'Accès réservé aux associés' });
