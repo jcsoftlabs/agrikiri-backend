@@ -15,7 +15,7 @@ import { createError } from '../../middleware/error.middleware';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
 const COMPANY_PHONE = '+509 2999-3636';
-const COMPANY_EMAIL = 'infos@agrikiri.com';
+const COMPANY_EMAIL = 'info@agrikiri.com';
 let dossierLogoCache: Buffer | null = null;
 const PDF_COLORS = {
   brand: '#1f5f2c',

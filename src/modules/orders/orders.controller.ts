@@ -6,7 +6,7 @@ import PDFDocument from 'pdfkit';
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
 const COMPANY_PHONE = '+509 2999-3636';
-const COMPANY_EMAIL = 'infos@agrikiri.com';
+const COMPANY_EMAIL = 'info@agrikiri.com';
 let invoiceLogoCache: Buffer | null = null;
 
 function formatCurrency(amount: number | string | null | undefined) {

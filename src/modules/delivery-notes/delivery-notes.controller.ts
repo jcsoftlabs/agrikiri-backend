@@ -7,7 +7,7 @@ import { createDeliveryNoteSchema, updateDeliveryNoteStatusSchema } from './deli
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
 const COMPANY_PHONE = '+509 2999-3636';
-const COMPANY_EMAIL = 'infos@agrikiri.com';
+const COMPANY_EMAIL = 'info@agrikiri.com';
 let deliveryNoteLogoCache: Buffer | null = null;
 
 function formatWeight(value: number | string | null | undefined) {
