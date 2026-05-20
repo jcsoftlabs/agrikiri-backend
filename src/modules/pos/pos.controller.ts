@@ -50,6 +50,23 @@ function formatCustomerType(method?: string | null) {
   return method ? labels[method] || method : 'Client';
 }
 
+function formatDeliveryRuleNote(deliveryRequested?: boolean, totalWeightLbs?: number | string | null) {
+  if (!deliveryRequested) {
+    return 'Vente comptoir sans livraison.';
+  }
+
+  const weight = Number(totalWeightLbs || 0);
+  if (weight > 11010) {
+    return 'Livraison gratuite appliquee car la commande depasse 5 tonnes.';
+  }
+
+  if (weight >= 2202) {
+    return 'Transport calcule a 5% car le chargement est compris entre 1 et 5 tonnes.';
+  }
+
+  return 'Transport calcule a 10% car le chargement est inferieur a 1 tonne.';
+}
+
 async function getPosLogoBuffer() {
   if (posLogoCache) return posLogoCache;
 
@@ -159,6 +176,8 @@ function renderThermalReceipt(doc: PDFKit.PDFDocument, sale: any, logoBuffer: Bu
     sale.companyName ? `Entreprise: ${sale.companyName}` : '',
     sale.taxId ? `Identifiant: ${sale.taxId}` : '',
     sale.customerPhone ? `Telephone: ${sale.customerPhone}` : '',
+    `Livraison: ${sale.deliveryRequested ? 'Oui' : 'Non'}`,
+    sale.deliveryRequested ? `Poids total: ${Number(sale.totalWeightLbs || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Lbs` : '',
     `Paiement: ${formatPaymentMethod(sale.paymentMethod)}`,
     `Caissier: ${`${sale.createdBy?.firstName || 'AGRIKIRI'} ${sale.createdBy?.lastName || ''}`.trim()}`,
   ].filter(Boolean);
@@ -202,6 +221,11 @@ function renderThermalReceipt(doc: PDFKit.PDFDocument, sale: any, logoBuffer: Bu
   doc.text('Remise', 18, cursorY, { width: 90 });
   doc.text(formatCurrency(sale.discountAmount), 108, cursorY, { width: contentWidth - 90, align: 'right' });
   cursorY += 14;
+  if (sale.deliveryRequested) {
+    doc.text('Livraison', 18, cursorY, { width: 90 });
+    doc.text(formatCurrency(sale.deliveryFee), 108, cursorY, { width: contentWidth - 90, align: 'right' });
+    cursorY += 14;
+  }
 
   doc.roundedRect(18, cursorY - 4, contentWidth, 28, 8).fill('#000000');
   doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(11);
@@ -217,6 +241,16 @@ function renderThermalReceipt(doc: PDFKit.PDFDocument, sale: any, logoBuffer: Bu
       lineGap: 1,
     });
     cursorY += doc.heightOfString(sale.notes, { width: contentWidth, lineGap: 1 }) + 10;
+  }
+
+  if (sale.deliveryRequested) {
+    doc.fillColor('#000000').font('Helvetica-Bold').fontSize(8.8).text('Transport', 18, cursorY, { width: contentWidth });
+    cursorY += 11;
+    doc.font('Helvetica').fontSize(8.2).text(formatDeliveryRuleNote(sale.deliveryRequested, sale.totalWeightLbs), 18, cursorY, {
+      width: contentWidth,
+      lineGap: 1,
+    });
+    cursorY += doc.heightOfString(formatDeliveryRuleNote(sale.deliveryRequested, sale.totalWeightLbs), { width: contentWidth, lineGap: 1 }) + 10;
   }
 
   doc.moveTo(18, cursorY).lineTo(pageWidth - 18, cursorY).dash(3, { space: 2 }).stroke();
@@ -246,6 +280,8 @@ function renderPosDocument(doc: PDFKit.PDFDocument, sale: any, type: 'RECEIPT' |
       `Numero: ${sale.saleNumber}`,
       `Date: ${new Date(sale.createdAt).toLocaleString('fr-FR')}`,
       `Statut: ${sale.status === 'DRAFT' ? 'Brouillon' : 'Finalise'}`,
+      `Livraison: ${sale.deliveryRequested ? 'Oui' : 'Non'}`,
+      sale.deliveryRequested ? `Poids total: ${Number(sale.totalWeightLbs || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Lbs` : '',
       `Paiement: ${formatPaymentMethod(type === 'PROFORMA' ? null : sale.paymentMethod)}`,
     ],
     40,
@@ -301,16 +337,22 @@ function renderPosDocument(doc: PDFKit.PDFDocument, sale: any, type: 'RECEIPT' |
   }
 
   const totalsTop = Math.max(rowY + 8, 560);
-  doc.roundedRect(316, totalsTop, 239, 104, 14).fill('#f4f1e8');
+  const totalsHeight = sale.deliveryRequested ? 124 : 104;
+  doc.roundedRect(316, totalsTop, 239, totalsHeight, 14).fill('#f4f1e8');
   doc.fillColor('#16341f').font('Helvetica-Bold').fontSize(12).text('Synthèse', 334, totalsTop + 14);
   doc.fillColor('#334155').font('Helvetica').fontSize(10);
   doc.text('Sous-total', 334, totalsTop + 40, { width: 100 });
   doc.text(formatCurrency(sale.subtotalAmount), 450, totalsTop + 40, { width: 85, align: 'right' });
   doc.text('Remise', 334, totalsTop + 58, { width: 100 });
   doc.text(formatCurrency(sale.discountAmount), 450, totalsTop + 58, { width: 85, align: 'right' });
+  if (sale.deliveryRequested) {
+    doc.text('Livraison', 334, totalsTop + 76, { width: 100 });
+    doc.text(formatCurrency(sale.deliveryFee), 450, totalsTop + 76, { width: 85, align: 'right' });
+  }
   doc.font('Helvetica-Bold').fillColor('#16341f');
-  doc.text('Total', 334, totalsTop + 80, { width: 100 });
-  doc.text(formatCurrency(sale.totalAmount), 450, totalsTop + 80, { width: 85, align: 'right' });
+  const totalRowY = sale.deliveryRequested ? totalsTop + 98 : totalsTop + 80;
+  doc.text('Total', 334, totalRowY, { width: 100 });
+  doc.text(formatCurrency(sale.totalAmount), 450, totalRowY, { width: 85, align: 'right' });
 
   if (sale.notes) {
     doc
@@ -323,6 +365,14 @@ function renderPosDocument(doc: PDFKit.PDFDocument, sale: any, type: 'RECEIPT' |
       .font('Helvetica')
       .fontSize(10)
       .text(sale.notes, 40, totalsTop + 26, { width: 250, lineGap: 3 });
+  }
+
+  if (sale.deliveryRequested) {
+    doc
+      .fillColor('#334155')
+      .font('Helvetica')
+      .fontSize(9)
+      .text(formatDeliveryRuleNote(sale.deliveryRequested, sale.totalWeightLbs), 40, totalsTop + 94, { width: 250, lineGap: 2 });
   }
 
   doc

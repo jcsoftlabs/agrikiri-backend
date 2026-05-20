@@ -210,16 +210,24 @@ function isFreeDeliveryZone(city: string, stateRegion: string) {
   );
 }
 
-function calculateDeliveryFee(subtotalAmount: number, deliveryAddress: z.infer<typeof createOrderSchema>['deliveryAddress']) {
+const ONE_TON_LBS = 2202;
+const FIVE_TONS_LBS = ONE_TON_LBS * 5;
+
+function calculateDeliveryFee(
+  subtotalAmount: number,
+  totalWeightLbs: number,
+  deliveryAddress: z.infer<typeof createOrderSchema>['deliveryAddress']
+) {
   if (deliveryAddress.countryCode !== 'HT') {
     return 0;
   }
 
-  const qualifiesForFreeDelivery =
-    subtotalAmount > 3000 && isFreeDeliveryZone(deliveryAddress.city, deliveryAddress.stateRegion);
-
-  if (qualifiesForFreeDelivery) {
+  if (totalWeightLbs > FIVE_TONS_LBS) {
     return 0;
+  }
+
+  if (totalWeightLbs >= ONE_TON_LBS) {
+    return Number((subtotalAmount * 0.05).toFixed(2));
   }
 
   return Number((subtotalAmount * 0.1).toFixed(2));
@@ -254,6 +262,7 @@ export async function createOrder(
   // Récupérer les produits et calculer les totaux
   let subtotalAmount = 0;
   let totalVP = 0;
+  let totalWeightLbs = 0;
   const orderItems: any[] = [];
 
   for (const item of items) {
@@ -262,6 +271,7 @@ export async function createOrder(
       id: string;
       label: string;
       price: any;
+      weightLbs: any;
       vpPoints: any;
       stockQuantity: number;
       isDefault: boolean;
@@ -310,9 +320,11 @@ export async function createOrder(
     const unitVP = selectedVariant ? selectedVariant.vpPoints : product.vpPoints;
     const itemTotal = Number(unitPrice) * item.quantity;
     const itemVP = Number(unitVP) * item.quantity;
+    const unitWeightLbs = Number(selectedVariant?.weightLbs ?? product.weightLbs ?? 0);
 
     subtotalAmount += itemTotal;
     totalVP += itemVP;
+    totalWeightLbs += unitWeightLbs * item.quantity;
 
     orderItems.push({
       productId: item.productId,
@@ -335,7 +347,7 @@ export async function createOrder(
   }
 
   const orderNumber = generateOrderNumber();
-  const deliveryFee = calculateDeliveryFee(subtotalAmount, deliveryAddress);
+  const deliveryFee = calculateDeliveryFee(subtotalAmount, totalWeightLbs, deliveryAddress);
   const totalAmount = subtotalAmount + deliveryFee;
   let paymentSession: { paymentUrl: string; transactionId: string | null } | null = null;
 

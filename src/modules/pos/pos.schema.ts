@@ -20,6 +20,7 @@ export const createPosSaleSchema = z.object({
   customerPhone: z.string().trim().max(40, 'Téléphone trop long').optional().nullable(),
   customerEmail: z.string().trim().email('Email invalide').max(120, 'Email trop long').optional().nullable().or(z.literal('')),
   customerAddress: z.string().trim().max(240, 'Adresse trop longue').optional().nullable(),
+  deliveryRequested: z.boolean().optional().default(false),
   paymentMethod: paymentMethodEnum.optional().nullable(),
   discountAmount: z.number().min(0, 'Remise invalide').max(100000000, 'Remise trop élevée').default(0),
   notes: z.string().trim().max(500, 'Notes trop longues').optional().nullable(),

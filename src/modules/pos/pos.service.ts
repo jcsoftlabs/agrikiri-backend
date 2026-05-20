@@ -6,6 +6,9 @@ import { createPosSaleSchema } from './pos.schema';
 
 type CreatePosSaleInput = z.infer<typeof createPosSaleSchema>;
 
+const ONE_TON_LBS = 2202;
+const FIVE_TONS_LBS = ONE_TON_LBS * 5;
+
 function generatePosSaleNumber(type: PosDocumentType) {
   const prefixMap: Record<PosDocumentType, string> = {
     RECEIPT: 'RC',
@@ -168,15 +171,33 @@ export async function createPosSale(adminUserId: string, payload: CreatePosSaleI
     throw createError('Le nom de l’entreprise est requis pour un client entreprise.', 400);
   }
 
+  if (payload.deliveryRequested && !payload.customerAddress?.trim()) {
+    throw createError('L’adresse de livraison est requise pour une vente POS avec livraison.', 400);
+  }
+
   const resolvedItems = await Promise.all(payload.items.map(resolveSaleItem));
   const subtotalAmount = Number(resolvedItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2));
   const discountAmount = Number((payload.discountAmount || 0).toFixed(2));
+  const totalWeightLbs = Number(
+    resolvedItems.reduce((sum, item) => {
+      const unitWeight = Number(item.selectedVariant?.weightLbs ?? item.product.weightLbs ?? 0);
+      return sum + unitWeight * item.quantity;
+    }, 0).toFixed(2)
+  );
 
   if (discountAmount > subtotalAmount) {
     throw createError('La remise ne peut pas dépasser le sous-total', 400);
   }
 
-  const totalAmount = Number((subtotalAmount - discountAmount).toFixed(2));
+  const discountedSubtotal = Number((subtotalAmount - discountAmount).toFixed(2));
+  const deliveryFee = payload.deliveryRequested
+    ? totalWeightLbs > FIVE_TONS_LBS
+      ? 0
+      : totalWeightLbs >= ONE_TON_LBS
+        ? Number((discountedSubtotal * 0.05).toFixed(2))
+        : Number((discountedSubtotal * 0.1).toFixed(2))
+    : 0;
+  const totalAmount = Number((discountedSubtotal + deliveryFee).toFixed(2));
   const saleNumber = generatePosSaleNumber(payload.documentType);
 
   const sale = await prisma.$transaction(async (tx) => {
@@ -192,10 +213,13 @@ export async function createPosSale(adminUserId: string, payload: CreatePosSaleI
         customerPhone: payload.customerPhone?.trim() || null,
         customerEmail: payload.customerEmail?.trim() || null,
         customerAddress: payload.customerAddress?.trim() || null,
+        deliveryRequested: payload.deliveryRequested ?? false,
         paymentMethod: isProforma ? null : payload.paymentMethod ?? null,
         subtotalAmount,
         discountAmount,
+        deliveryFee,
         totalAmount,
+        totalWeightLbs,
         notes: payload.notes?.trim() || null,
         createdById: adminUserId,
         items: {
