@@ -63,7 +63,7 @@ export async function getUsersList(req: AuthRequest, res: Response, next: NextFu
       Number(page) || 1,
       Number(limit) || 20,
       search as string,
-      role as 'CUSTOMER' | 'AYIZAN' | 'BUYER' | 'DELIVERY_AGENT' | 'ADMIN' | undefined
+      role as 'CUSTOMER' | 'AYIZAN' | 'BUYER' | 'DELIVERY_AGENT' | 'CASHIER' | 'ACCOUNTANT' | 'ADMIN' | undefined
     );
     res.json({ success: true, data: users });
   } catch (error) {

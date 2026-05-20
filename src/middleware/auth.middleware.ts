@@ -72,6 +72,15 @@ export function requirePosAccess(req: AuthRequest, res: Response, next: NextFunc
   next();
 }
 
+export function requireAccountingAccess(req: AuthRequest, res: Response, next: NextFunction): void {
+  if (!req.user || (req.user.role !== 'ADMIN' && req.user.role !== 'ACCOUNTANT')) {
+    res.status(403).json({ success: false, message: 'Accès réservé aux administrateurs et à la comptabilité' });
+    return;
+  }
+
+  next();
+}
+
 export function requireAssociate(req: AuthRequest, res: Response, next: NextFunction): void {
   if (!req.user || (req.user.role !== 'ASSOCIATE' && req.user.role !== 'ADMIN')) {
     res.status(403).json({ success: false, message: 'Accès réservé aux associés' });

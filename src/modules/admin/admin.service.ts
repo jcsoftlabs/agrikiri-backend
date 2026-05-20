@@ -7,7 +7,7 @@ import { generateReferralCode } from '../../utils/mlm-calculator';
 const SALT_ROUNDS = 12;
 const REPORT_RANGES = ['7d', '30d', '90d'] as const;
 
-const userRoleSchema = z.enum(['CUSTOMER', 'AYIZAN', 'BUYER', 'DELIVERY_AGENT', 'CASHIER', 'ADMIN']);
+const userRoleSchema = z.enum(['CUSTOMER', 'AYIZAN', 'BUYER', 'DELIVERY_AGENT', 'CASHIER', 'ACCOUNTANT', 'ADMIN']);
 
 export const createAdminUserSchema = z.object({
   firstName: z.string().min(2, 'Le prénom est trop court'),
