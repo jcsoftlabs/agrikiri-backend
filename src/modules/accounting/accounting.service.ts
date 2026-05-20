@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database';
+import { createError } from '../../middleware/error.middleware';
 
 const REPORT_RANGES = ['7d', '30d', '90d'] as const;
 const FALLBACK_CHANNEL = 'AUTRE';
@@ -160,6 +161,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         cashCollectionMethod: true,
         fieldExpenses: true,
         fieldExpensesMethod: true,
+        accountingValidatedAt: true,
         createdAt: true,
         deliveryAgent: { select: { firstName: true, lastName: true } },
       },
@@ -188,6 +190,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         title: true,
         disbursementTotal: true,
         disbursementMethod: true,
+        accountingExecutedAt: true,
         updatedAt: true,
         author: { select: { firstName: true, lastName: true } },
       },
@@ -201,6 +204,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         totalFees: true,
         totalReported: true,
         remainingAmount: true,
+        accountingValidatedAt: true,
         createdAt: true,
         allocation: { select: { title: true } },
         buyer: { select: { firstName: true, lastName: true } },
@@ -465,6 +469,14 @@ function buildMethodBreakdowns(data: DashboardPeriodData) {
   };
 }
 
+function escapeCsv(value: string | number | null | undefined) {
+  const stringValue = String(value ?? '');
+  if (/[",\n]/.test(stringValue)) {
+    return `"${stringValue.replace(/"/g, '""')}"`;
+  }
+  return stringValue;
+}
+
 export async function getAccountingDashboard(range: string = '30d', startDateParam?: string, endDateParam?: string) {
   const { normalizedRange, days, startDate, endDate } = getReportWindow(range, startDateParam, endDateParam);
 
@@ -543,6 +555,23 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
 
+  const recentClosures = await prisma.accountingPeriodClosure.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+    select: {
+      id: true,
+      rangeLabel: true,
+      startDate: true,
+      endDate: true,
+      totalInflows: true,
+      totalOutflows: true,
+      netTreasury: true,
+      note: true,
+      closedById: true,
+      createdAt: true,
+    },
+  });
+
   return {
     range: normalizedRange,
     period: {
@@ -600,5 +629,189 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       amountRequested: toNumber(request.amountRequested),
       createdAt: request.createdAt.toISOString(),
     })),
+    pendingBuyerReports: currentData.buyerReports
+      .filter((report) => !report.accountingValidatedAt)
+      .slice(-10)
+      .reverse()
+      .map((report) => ({
+        id: report.id,
+        title: report.allocation.title,
+        buyer: `${report.buyer.firstName} ${report.buyer.lastName}`,
+        amount: toNumber(report.totalReported),
+        createdAt: report.createdAt.toISOString(),
+      })),
+    pendingDeliveryExpenses: currentData.deliveryReports
+      .filter((report) => toNumber(report.fieldExpenses) > 0 && !report.accountingValidatedAt)
+      .slice(-10)
+      .reverse()
+      .map((report) => ({
+        id: report.id,
+        title: report.title,
+        deliveryAgent: `${report.deliveryAgent.firstName} ${report.deliveryAgent.lastName}`,
+        amount: toNumber(report.fieldExpenses),
+        method: formatChannelLabel(report.fieldExpensesMethod),
+        createdAt: report.createdAt.toISOString(),
+      })),
+    pendingDossierExecutions: currentData.completedDossiers
+      .filter((dossier) => !dossier.accountingExecutedAt)
+      .slice(-10)
+      .reverse()
+      .map((dossier) => ({
+        id: dossier.id,
+        title: dossier.title,
+        amount: toNumber(dossier.disbursementTotal),
+        method: formatChannelLabel(dossier.disbursementMethod),
+        createdAt: dossier.updatedAt.toISOString(),
+      })),
+    recentClosures: recentClosures.map((closure) => ({
+      id: closure.id,
+      rangeLabel: closure.rangeLabel,
+      startDate: closure.startDate.toISOString(),
+      endDate: closure.endDate.toISOString(),
+      totalInflows: toNumber(closure.totalInflows),
+      totalOutflows: toNumber(closure.totalOutflows),
+      netTreasury: toNumber(closure.netTreasury),
+      note: closure.note,
+      closedById: closure.closedById,
+      createdAt: closure.createdAt.toISOString(),
+    })),
   };
+}
+
+export async function reconcileCashOrder(orderId: string, userId: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      paymentMethod: true,
+      paymentStatus: true,
+      status: true,
+      totalAmount: true,
+      orderNumber: true,
+      cashReconciledAt: true,
+    },
+  });
+
+  if (!order) throw createError('Commande introuvable', 404);
+  if (order.paymentMethod !== 'CASH') throw createError('Seules les commandes cash peuvent être rapprochées ici', 400);
+  if (order.status !== 'DELIVERED') throw createError('La commande doit être livrée avant rapprochement', 400);
+  if (order.cashReconciledAt || order.paymentStatus === 'PAID') throw createError('Cette commande est déjà rapprochée', 400);
+
+  return prisma.order.update({
+    where: { id: orderId },
+    data: {
+      paymentStatus: 'PAID',
+      cashReconciledAt: new Date(),
+      cashReconciledById: userId,
+    },
+    select: {
+      id: true,
+      orderNumber: true,
+      totalAmount: true,
+      paymentStatus: true,
+      cashReconciledAt: true,
+    },
+  });
+}
+
+export async function validateOutflow(userId: string, payload: { type: 'BUYER_REPORT' | 'DELIVERY_REPORT'; id: string }) {
+  if (payload.type === 'BUYER_REPORT') {
+    const report = await prisma.buyerExpenseReport.findUnique({
+      where: { id: payload.id },
+      select: { id: true, accountingValidatedAt: true, totalReported: true },
+    });
+    if (!report) throw createError('Rapport acheteur introuvable', 404);
+    if (report.accountingValidatedAt) throw createError('Cette sortie a déjà été validée', 400);
+
+    return prisma.buyerExpenseReport.update({
+      where: { id: payload.id },
+      data: {
+        accountingValidatedAt: new Date(),
+        accountingValidatedById: userId,
+      },
+      select: { id: true, accountingValidatedAt: true, totalReported: true },
+    });
+  }
+
+  const report = await prisma.deliveryAgentReport.findUnique({
+    where: { id: payload.id },
+    select: { id: true, accountingValidatedAt: true, fieldExpenses: true },
+  });
+  if (!report) throw createError('Rapport livreur introuvable', 404);
+  if (report.accountingValidatedAt) throw createError('Cette sortie a déjà été validée', 400);
+
+  return prisma.deliveryAgentReport.update({
+    where: { id: payload.id },
+    data: {
+      accountingValidatedAt: new Date(),
+      accountingValidatedById: userId,
+    },
+    select: { id: true, accountingValidatedAt: true, fieldExpenses: true },
+  });
+}
+
+export async function markDossierExecuted(dossierId: string, userId: string) {
+  const dossier = await prisma.dossier.findUnique({
+    where: { id: dossierId },
+    select: {
+      id: true,
+      status: true,
+      accountingExecutedAt: true,
+      disbursementTotal: true,
+      title: true,
+    },
+  });
+
+  if (!dossier) throw createError('Dossier introuvable', 404);
+  if (dossier.status !== 'COMPLETED') throw createError('Seuls les dossiers approuvés peuvent être pointés comme exécutés', 400);
+  if (dossier.accountingExecutedAt) throw createError('Ce dossier est déjà pointé comme exécuté', 400);
+
+  return prisma.dossier.update({
+    where: { id: dossierId },
+    data: {
+      accountingExecutedAt: new Date(),
+      accountingExecutedById: userId,
+    },
+    select: {
+      id: true,
+      title: true,
+      accountingExecutedAt: true,
+      disbursementTotal: true,
+    },
+  });
+}
+
+export async function closeAccountingPeriod(userId: string, range: string, startDate?: string, endDate?: string, note?: string) {
+  const dashboard = await getAccountingDashboard(range, startDate, endDate);
+
+  return prisma.accountingPeriodClosure.create({
+    data: {
+      rangeLabel: dashboard.period.label,
+      startDate: new Date(dashboard.period.startDate),
+      endDate: new Date(dashboard.period.endDate),
+      totalInflows: dashboard.overview.totalInflows,
+      totalOutflows: dashboard.overview.totalOutflows,
+      netTreasury: dashboard.overview.netTreasury,
+      note: note?.trim() || null,
+      closedById: userId,
+    },
+  });
+}
+
+export async function exportAccountingJournal(range: string, startDate?: string, endDate?: string) {
+  const dashboard = await getAccountingDashboard(range, startDate, endDate);
+  const rows = [
+    ['Date', 'Sens', 'Type', 'Libellé', 'Contrepartie', 'Moyen', 'Montant HTG'],
+    ...dashboard.recentOperations.map((operation) => [
+      new Date(operation.createdAt).toISOString(),
+      ['Allocation acheteur', 'Dossier approuvé'].includes(operation.type) ? 'SORTIE' : 'ENTREE',
+      operation.type,
+      operation.label,
+      operation.counterparty,
+      operation.method,
+      operation.amount.toFixed(2),
+    ]),
+  ];
+
+  return rows.map((row) => row.map((cell) => escapeCsv(cell)).join(',')).join('\n');
 }
