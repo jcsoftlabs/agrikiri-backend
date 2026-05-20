@@ -676,10 +676,17 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
   const methodBreakdowns = buildMethodBreakdowns(currentData);
   const approvedBudgetEnvelopes = buildApprovedBudgetEnvelopes(currentData);
 
-  const openAllocationBalance = globalOpenAllocations.reduce((sum, allocation) => {
-    const reported = allocation.reports.reduce((reportSum, report) => reportSum + toNumber(report.totalReported), 0);
-    return sum + Math.max(0, toNumber(allocation.amountAllocated) - reported);
-  }, 0);
+  const openAllocationSummaries = globalOpenAllocations
+    .map((allocation) => {
+      const reported = allocation.reports.reduce((reportSum, report) => reportSum + toNumber(report.totalReported), 0);
+      return Math.max(0, toNumber(allocation.amountAllocated) - reported);
+    })
+    .filter((remainingAmount) => remainingAmount > 0.009);
+
+  const openAllocationBalance = roundMoney(
+    openAllocationSummaries.reduce((sum, remainingAmount) => sum + remainingAmount, 0)
+  );
+  const openAllocationCount = openAllocationSummaries.length;
 
   const journalEntries = buildJournalEntries(currentData);
   const recentOperations = journalEntries.slice(0, 10);
@@ -757,6 +764,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       pendingCodAmount: overview.pendingCodAmount,
       inTransitDeliveryNotes: overview.inTransitDeliveryNotes,
       pendingAllocationConfirmations: overview.pendingAllocationConfirmations,
+      openAllocationCount,
       openAllocationBalance,
     },
     alerts: buildAlerts(overview, previousOverview),
