@@ -112,6 +112,7 @@ export async function createDossier(userId: string, data: CreateDossierInput) {
       description: data.description,
       disbursementLines: disbursementLines as Prisma.InputJsonValue,
       disbursementTotal: new Prisma.Decimal(disbursementTotal.toFixed(2)),
+      disbursementMethod: data.disbursementMethod,
       authorId: userId,
     }
   });

@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const accountingChannelEnum = z.enum([
+  'CASH',
+  'MONCASH',
+  'NATCASH',
+  'PLOPPLOP',
+  'CHEQUE',
+  'VIREMENT_BANCAIRE',
+  'KASHPAW',
+  'AUTRE',
+]);
+
 export const createBuyerAllocationSchema = z.object({
   buyerId: z.string().uuid('Acheteur invalide'),
   title: z.string().trim().min(3, 'Le libellé est requis').max(120, 'Le libellé est trop long'),
@@ -9,6 +20,7 @@ export const createBuyerAllocationSchema = z.object({
     .number()
     .positive('Le montant alloué doit être supérieur à 0')
     .max(100000000, 'Le montant alloué est trop élevé'),
+  disbursementMethod: accountingChannelEnum,
 });
 
 export const buyerExpenseLineSchema = z.object({

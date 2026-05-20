@@ -153,6 +153,7 @@ export async function createAllocation(allocatedById: string, data: CreateBuyerA
         title: data.title.trim(),
         description: data.description?.trim() || null,
         amountAllocated: new Prisma.Decimal(roundMoney(data.amountAllocated).toFixed(2)),
+        disbursementMethod: data.disbursementMethod,
       },
       include: buyerAllocationInclude,
     });

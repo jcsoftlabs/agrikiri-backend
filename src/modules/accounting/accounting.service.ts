@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database';
 
 const REPORT_RANGES = ['7d', '30d', '90d'] as const;
+const FALLBACK_CHANNEL = 'AUTRE';
 
 function normalizeDateInput(value?: string) {
   if (!value) return null;
@@ -53,6 +54,26 @@ function formatDayLabel(date: Date) {
   return date.toLocaleDateString('fr-HT', { day: 'numeric', month: 'short' });
 }
 
+function normalizeChannel(method?: string | null) {
+  return method || FALLBACK_CHANNEL;
+}
+
+function formatChannelLabel(method?: string | null) {
+  const labels: Record<string, string> = {
+    CASH: 'Cash',
+    MONCASH: 'MonCash',
+    NATCASH: 'NatCash',
+    PLOPPLOP: 'PLOP PLOP',
+    CHEQUE: 'Chèque',
+    VIREMENT_BANCAIRE: 'Virement bancaire',
+    KASHPAW: 'Kashpaw',
+    AUTRE: 'Autre',
+  };
+
+  const key = normalizeChannel(method);
+  return labels[key] || key;
+}
+
 function computeDelta(currentValue: number, previousValue: number) {
   const diff = currentValue - previousValue;
   const percent = previousValue === 0 ? (currentValue === 0 ? 0 : 100) : (diff / previousValue) * 100;
@@ -64,6 +85,22 @@ function computeDelta(currentValue: number, previousValue: number) {
     percent,
     direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
   };
+}
+
+function pushMethodAmount(store: Map<string, number>, method: string | null | undefined, amount: number) {
+  if (amount <= 0) return;
+  const key = normalizeChannel(method);
+  store.set(key, (store.get(key) || 0) + amount);
+}
+
+function toMethodRows(store: Map<string, number>) {
+  return Array.from(store.entries())
+    .map(([method, amount]) => ({
+      method,
+      label: formatChannelLabel(method),
+      amount,
+    }))
+    .sort((a, b) => b.amount - a.amount);
 }
 
 type DashboardPeriodData = Awaited<ReturnType<typeof loadAccountingPeriodData>>;
@@ -120,7 +157,9 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         id: true,
         title: true,
         cashCollected: true,
+        cashCollectionMethod: true,
         fieldExpenses: true,
+        fieldExpensesMethod: true,
         createdAt: true,
         deliveryAgent: { select: { firstName: true, lastName: true } },
       },
@@ -132,6 +171,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         id: true,
         title: true,
         amountAllocated: true,
+        disbursementMethod: true,
         status: true,
         createdAt: true,
         buyer: { select: { firstName: true, lastName: true } },
@@ -147,6 +187,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         id: true,
         title: true,
         disbursementTotal: true,
+        disbursementMethod: true,
         updatedAt: true,
         author: { select: { firstName: true, lastName: true } },
       },
@@ -392,6 +433,38 @@ function buildOverview(data: DashboardPeriodData) {
   };
 }
 
+function buildMethodBreakdowns(data: DashboardPeriodData) {
+  const inflows = new Map<string, number>();
+  const outflows = new Map<string, number>();
+
+  for (const order of data.paidOrders) {
+    pushMethodAmount(inflows, order.paymentMethod, toNumber(order.totalAmount));
+  }
+
+  for (const sale of data.posSales) {
+    if (sale.documentType === 'PROFORMA') continue;
+    pushMethodAmount(inflows, sale.paymentMethod, toNumber(sale.totalAmount));
+  }
+
+  for (const report of data.deliveryReports) {
+    pushMethodAmount(inflows, report.cashCollectionMethod, toNumber(report.cashCollected));
+    pushMethodAmount(outflows, report.fieldExpensesMethod, toNumber(report.fieldExpenses));
+  }
+
+  for (const allocation of data.allocations) {
+    pushMethodAmount(outflows, allocation.disbursementMethod, toNumber(allocation.amountAllocated));
+  }
+
+  for (const dossier of data.completedDossiers) {
+    pushMethodAmount(outflows, dossier.disbursementMethod, toNumber(dossier.disbursementTotal));
+  }
+
+  return {
+    inflows: toMethodRows(inflows),
+    outflows: toMethodRows(outflows),
+  };
+}
+
 export async function getAccountingDashboard(range: string = '30d', startDateParam?: string, endDateParam?: string) {
   const { normalizedRange, days, startDate, endDate } = getReportWindow(range, startDateParam, endDateParam);
 
@@ -422,6 +495,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
   const overview = buildOverview(currentData);
   const previousOverview = buildOverview(previousData);
   const timeline = buildTimeline(days, startDate, currentData);
+  const methodBreakdowns = buildMethodBreakdowns(currentData);
 
   const openAllocationBalance = globalOpenAllocations.reduce((sum, allocation) => {
     const reported = allocation.reports.reduce((reportSum, report) => reportSum + toNumber(report.totalReported), 0);
@@ -435,6 +509,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       label: order.orderNumber,
       counterparty: `${order.customer.firstName} ${order.customer.lastName}`,
       amount: toNumber(order.totalAmount),
+      method: formatChannelLabel(order.paymentMethod),
       createdAt: order.createdAt.toISOString(),
     })),
     ...currentData.posSales.slice(-4).map((sale) => ({
@@ -443,6 +518,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       label: sale.saleNumber,
       counterparty: sale.customerName,
       amount: toNumber(sale.totalAmount),
+      method: sale.documentType === 'PROFORMA' ? 'Document' : formatChannelLabel(sale.paymentMethod),
       createdAt: sale.createdAt.toISOString(),
     })),
     ...currentData.allocations.slice(-4).map((allocation) => ({
@@ -451,6 +527,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       label: allocation.title,
       counterparty: `${allocation.buyer.firstName} ${allocation.buyer.lastName}`,
       amount: toNumber(allocation.amountAllocated),
+      method: formatChannelLabel(allocation.disbursementMethod),
       createdAt: allocation.createdAt.toISOString(),
     })),
     ...currentData.completedDossiers.slice(-4).map((dossier) => ({
@@ -459,6 +536,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       label: dossier.title,
       counterparty: `${dossier.author.firstName} ${dossier.author.lastName}`,
       amount: toNumber(dossier.disbursementTotal),
+      method: formatChannelLabel(dossier.disbursementMethod),
       createdAt: dossier.updatedAt.toISOString(),
     })),
   ]
@@ -486,6 +564,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       deliveryCashCollected: overview.deliveryCashCollected,
       paidOrdersCount: currentData.paidOrders.length,
       completedPosSalesCount: currentData.posSales.filter((sale) => sale.documentType !== 'PROFORMA').length,
+      byMethod: methodBreakdowns.inflows,
     },
     disbursements: {
       buyerAllocated: overview.buyerAllocated,
@@ -496,6 +575,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       deliveryFieldExpenses: overview.deliveryFieldExpenses,
       pendingFundRequestsAmount: overview.pendingFundRequestsAmount,
       pendingFundRequestsCount: overview.pendingFundRequestsCount,
+      byMethod: methodBreakdowns.outflows,
     },
     reconciliation: {
       pendingCodCount: currentData.deliveredCashOrders.length,
