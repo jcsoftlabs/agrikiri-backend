@@ -7,6 +7,7 @@ const router = Router();
 router.use(authenticate, requireAccountingAccess);
 
 router.get('/dashboard', accountingController.getAccountingDashboard);
+router.get('/journal', accountingController.getAccountingJournal);
 router.get('/journal/export', accountingController.exportJournal);
 router.post('/orders/:id/reconcile-cash', accountingController.reconcileCashOrder);
 router.post('/outflows/validate', accountingController.validateOutflow);

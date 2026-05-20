@@ -105,6 +105,17 @@ function toMethodRows(store: Map<string, number>) {
 }
 
 type DashboardPeriodData = Awaited<ReturnType<typeof loadAccountingPeriodData>>;
+type AccountingOperation = {
+  id: string;
+  type: string;
+  label: string;
+  counterparty: string;
+  amount: number;
+  method: string;
+  createdAt: string;
+  direction: 'INFLOW' | 'OUTFLOW';
+  status: 'completed' | 'pending' | 'validated' | 'executed' | 'reconciled';
+};
 
 async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
   const rangeWhere = { gte: startDate, lte: endDate };
@@ -477,6 +488,94 @@ function escapeCsv(value: string | number | null | undefined) {
   return stringValue;
 }
 
+function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
+  return [
+    ...data.paidOrders.map((order) => ({
+      id: `order-${order.id}`,
+      type: 'Encaissement online',
+      label: order.orderNumber,
+      counterparty: `${order.customer.firstName} ${order.customer.lastName}`,
+      amount: toNumber(order.totalAmount),
+      method: formatChannelLabel(order.paymentMethod),
+      createdAt: order.createdAt.toISOString(),
+      direction: 'INFLOW' as const,
+      status: 'reconciled' as const,
+    })),
+    ...data.posSales
+      .filter((sale) => sale.documentType !== 'PROFORMA')
+      .map((sale) => ({
+        id: `pos-${sale.id}`,
+        type: 'Vente POS',
+        label: sale.saleNumber,
+        counterparty: sale.customerName,
+        amount: toNumber(sale.totalAmount),
+        method: formatChannelLabel(sale.paymentMethod),
+        createdAt: sale.createdAt.toISOString(),
+        direction: 'INFLOW' as const,
+        status: 'completed' as const,
+      })),
+    ...data.deliveryReports
+      .filter((report) => toNumber(report.cashCollected) > 0)
+      .map((report) => ({
+        id: `delivery-cash-${report.id}`,
+        type: 'Cash livreur',
+        label: report.title,
+        counterparty: `${report.deliveryAgent.firstName} ${report.deliveryAgent.lastName}`,
+        amount: toNumber(report.cashCollected),
+        method: formatChannelLabel(report.cashCollectionMethod),
+        createdAt: report.createdAt.toISOString(),
+        direction: 'INFLOW' as const,
+        status: 'completed' as const,
+      })),
+    ...data.allocations.map((allocation) => ({
+      id: `allocation-${allocation.id}`,
+      type: 'Allocation acheteur',
+      label: allocation.title,
+      counterparty: `${allocation.buyer.firstName} ${allocation.buyer.lastName}`,
+      amount: toNumber(allocation.amountAllocated),
+      method: formatChannelLabel(allocation.disbursementMethod),
+      createdAt: allocation.createdAt.toISOString(),
+      direction: 'OUTFLOW' as const,
+      status: allocation.status === 'PENDING_CONFIRMATION' ? ('pending' as const) : ('completed' as const),
+    })),
+    ...data.buyerReports.map((report) => ({
+      id: `buyer-report-${report.id}`,
+      type: 'Rapport acheteur',
+      label: report.allocation.title,
+      counterparty: `${report.buyer.firstName} ${report.buyer.lastName}`,
+      amount: toNumber(report.totalReported),
+      method: 'Décaissement terrain',
+      createdAt: report.createdAt.toISOString(),
+      direction: 'OUTFLOW' as const,
+      status: report.accountingValidatedAt ? ('validated' as const) : ('pending' as const),
+    })),
+    ...data.deliveryReports
+      .filter((report) => toNumber(report.fieldExpenses) > 0)
+      .map((report) => ({
+        id: `delivery-expense-${report.id}`,
+        type: 'Frais livreur',
+        label: report.title,
+        counterparty: `${report.deliveryAgent.firstName} ${report.deliveryAgent.lastName}`,
+        amount: toNumber(report.fieldExpenses),
+        method: formatChannelLabel(report.fieldExpensesMethod),
+        createdAt: report.createdAt.toISOString(),
+        direction: 'OUTFLOW' as const,
+        status: report.accountingValidatedAt ? ('validated' as const) : ('pending' as const),
+      })),
+    ...data.completedDossiers.map((dossier) => ({
+      id: `dossier-${dossier.id}`,
+      type: 'Dossier approuvé',
+      label: dossier.title,
+      counterparty: `${dossier.author.firstName} ${dossier.author.lastName}`,
+      amount: toNumber(dossier.disbursementTotal),
+      method: formatChannelLabel(dossier.disbursementMethod),
+      createdAt: dossier.updatedAt.toISOString(),
+      direction: 'OUTFLOW' as const,
+      status: dossier.accountingExecutedAt ? ('executed' as const) : ('pending' as const),
+    })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 export async function getAccountingDashboard(range: string = '30d', startDateParam?: string, endDateParam?: string) {
   const { normalizedRange, days, startDate, endDate } = getReportWindow(range, startDateParam, endDateParam);
 
@@ -514,46 +613,8 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
     return sum + Math.max(0, toNumber(allocation.amountAllocated) - reported);
   }, 0);
 
-  const recentOperations = [
-    ...currentData.paidOrders.slice(-4).map((order) => ({
-      id: `order-${order.id}`,
-      type: 'Encaissement online',
-      label: order.orderNumber,
-      counterparty: `${order.customer.firstName} ${order.customer.lastName}`,
-      amount: toNumber(order.totalAmount),
-      method: formatChannelLabel(order.paymentMethod),
-      createdAt: order.createdAt.toISOString(),
-    })),
-    ...currentData.posSales.slice(-4).map((sale) => ({
-      id: `pos-${sale.id}`,
-      type: sale.documentType === 'PROFORMA' ? 'Proforma POS' : 'Vente POS',
-      label: sale.saleNumber,
-      counterparty: sale.customerName,
-      amount: toNumber(sale.totalAmount),
-      method: sale.documentType === 'PROFORMA' ? 'Document' : formatChannelLabel(sale.paymentMethod),
-      createdAt: sale.createdAt.toISOString(),
-    })),
-    ...currentData.allocations.slice(-4).map((allocation) => ({
-      id: `allocation-${allocation.id}`,
-      type: 'Allocation acheteur',
-      label: allocation.title,
-      counterparty: `${allocation.buyer.firstName} ${allocation.buyer.lastName}`,
-      amount: toNumber(allocation.amountAllocated),
-      method: formatChannelLabel(allocation.disbursementMethod),
-      createdAt: allocation.createdAt.toISOString(),
-    })),
-    ...currentData.completedDossiers.slice(-4).map((dossier) => ({
-      id: `dossier-${dossier.id}`,
-      type: 'Dossier approuvé',
-      label: dossier.title,
-      counterparty: `${dossier.author.firstName} ${dossier.author.lastName}`,
-      amount: toNumber(dossier.disbursementTotal),
-      method: formatChannelLabel(dossier.disbursementMethod),
-      createdAt: dossier.updatedAt.toISOString(),
-    })),
-  ]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 10);
+  const journalEntries = buildJournalEntries(currentData);
+  const recentOperations = journalEntries.slice(0, 10);
 
   const recentClosures = await prisma.accountingPeriodClosure.findMany({
     orderBy: { createdAt: 'desc' },
@@ -571,6 +632,16 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       createdAt: true,
     },
   });
+  const closureUserIds = Array.from(new Set(recentClosures.map((closure) => closure.closedById)));
+  const closureUsers = closureUserIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: closureUserIds } },
+        select: { id: true, firstName: true, lastName: true },
+      })
+    : [];
+  const closureUserMap = new Map(
+    closureUsers.map((user) => [user.id, `${user.firstName} ${user.lastName}`])
+  );
 
   return {
     range: normalizedRange,
@@ -615,6 +686,13 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
     },
     alerts: buildAlerts(overview, previousOverview),
     recentOperations,
+    journalSummary: {
+      totalEntries: journalEntries.length,
+      pendingEntries: journalEntries.filter((entry) => entry.status === 'pending').length,
+      validatedEntries: journalEntries.filter((entry) => entry.status === 'validated').length,
+      executedEntries: journalEntries.filter((entry) => entry.status === 'executed').length,
+      reconciledEntries: journalEntries.filter((entry) => entry.status === 'reconciled').length,
+    },
     pendingCashOrders: currentData.deliveredCashOrders.map((order) => ({
       id: order.id,
       orderNumber: order.orderNumber,
@@ -673,6 +751,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       netTreasury: toNumber(closure.netTreasury),
       note: closure.note,
       closedById: closure.closedById,
+      closedByName: closureUserMap.get(closure.closedById) || closure.closedById,
       createdAt: closure.createdAt.toISOString(),
     })),
   };
@@ -799,19 +878,85 @@ export async function closeAccountingPeriod(userId: string, range: string, start
 }
 
 export async function exportAccountingJournal(range: string, startDate?: string, endDate?: string) {
-  const dashboard = await getAccountingDashboard(range, startDate, endDate);
+  const { startDate: from, endDate: to } = getReportWindow(range, startDate, endDate);
+  const data = await loadAccountingPeriodData(from, to);
+  const journalEntries = buildJournalEntries(data);
   const rows = [
-    ['Date', 'Sens', 'Type', 'Libellé', 'Contrepartie', 'Moyen', 'Montant HTG'],
-    ...dashboard.recentOperations.map((operation) => [
+    ['Date', 'Sens', 'Type', 'Libellé', 'Contrepartie', 'Moyen', 'Statut', 'Montant HTG'],
+    ...journalEntries.map((operation) => [
       new Date(operation.createdAt).toISOString(),
-      ['Allocation acheteur', 'Dossier approuvé'].includes(operation.type) ? 'SORTIE' : 'ENTREE',
+      operation.direction,
       operation.type,
       operation.label,
       operation.counterparty,
       operation.method,
+      operation.status,
       operation.amount.toFixed(2),
     ]),
   ];
 
   return rows.map((row) => row.map((cell) => escapeCsv(cell)).join(',')).join('\n');
+}
+
+export async function getAccountingJournal(params: {
+  range?: string;
+  startDate?: string;
+  endDate?: string;
+  method?: string;
+  type?: string;
+  direction?: 'INFLOW' | 'OUTFLOW';
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  const { startDate: from, endDate: to, normalizedRange } = getReportWindow(params.range || '30d', params.startDate, params.endDate);
+  const data = await loadAccountingPeriodData(from, to);
+  let journalEntries = buildJournalEntries(data);
+
+  if (params.method) {
+    const normalized = params.method.toLowerCase();
+    journalEntries = journalEntries.filter((entry) => entry.method.toLowerCase() === normalized);
+  }
+
+  if (params.type) {
+    const normalized = params.type.toLowerCase();
+    journalEntries = journalEntries.filter((entry) => entry.type.toLowerCase().includes(normalized));
+  }
+
+  if (params.direction) {
+    journalEntries = journalEntries.filter((entry) => entry.direction === params.direction);
+  }
+
+  if (params.status) {
+    journalEntries = journalEntries.filter((entry) => entry.status === params.status);
+  }
+
+  const page = Math.max(1, params.page || 1);
+  const pageSize = Math.min(100, Math.max(10, params.pageSize || 25));
+  const total = journalEntries.length;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const start = (page - 1) * pageSize;
+  const entries = journalEntries.slice(start, start + pageSize);
+
+  return {
+    range: normalizedRange,
+    filters: {
+      method: params.method || null,
+      type: params.type || null,
+      direction: params.direction || null,
+      status: params.status || null,
+    },
+    pagination: {
+      page,
+      pageSize,
+      total,
+      pageCount,
+    },
+    summary: {
+      inflows: journalEntries.filter((entry) => entry.direction === 'INFLOW').reduce((sum, entry) => sum + entry.amount, 0),
+      outflows: journalEntries.filter((entry) => entry.direction === 'OUTFLOW').reduce((sum, entry) => sum + entry.amount, 0),
+      pending: journalEntries.filter((entry) => entry.status === 'pending').length,
+    },
+    entries,
+  };
 }

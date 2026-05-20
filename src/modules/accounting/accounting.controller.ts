@@ -78,3 +78,24 @@ export async function exportJournal(req: AuthRequest, res: Response, next: NextF
     next(error);
   }
 }
+
+export async function getAccountingJournal(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { range, startDate, endDate, method, type, direction, status, page, pageSize } = req.query;
+    const data = await accountingService.getAccountingJournal({
+      range: range as string | undefined,
+      startDate: startDate as string | undefined,
+      endDate: endDate as string | undefined,
+      method: method as string | undefined,
+      type: type as string | undefined,
+      direction: direction as 'INFLOW' | 'OUTFLOW' | undefined,
+      status: status as string | undefined,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
