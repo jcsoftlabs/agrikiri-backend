@@ -20,9 +20,21 @@ const buyerPersonSelect = {
   phone: true,
 } as const;
 
+const dossierBudgetSelect = {
+  id: true,
+  title: true,
+  status: true,
+  disbursementTotal: true,
+  disbursementMethod: true,
+  accountingExecutedAt: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
 const buyerAllocationInclude = {
   buyer: { select: buyerPersonSelect },
   allocatedBy: { select: buyerPersonSelect },
+  sourceDossier: { select: dossierBudgetSelect },
   reports: {
     include: {
       lines: {
@@ -70,6 +82,12 @@ function serializeAllocation(allocation: any) {
     totalFees,
     totalReported,
     remainingAmount,
+    sourceDossier: allocation.sourceDossier
+      ? {
+          ...allocation.sourceDossier,
+          disbursementTotal: toNumber(allocation.sourceDossier.disbursementTotal),
+        }
+      : null,
     reports,
   };
 }
@@ -99,6 +117,28 @@ function buildOverview(allocations: any[]) {
       allocation.status === 'ACTIVE' || allocation.status === 'PARTIALLY_REPORTED'
     ).length,
     reportedAllocations: allocations.filter((allocation) => allocation.status === 'REPORTED').length,
+  };
+}
+
+function serializeApprovedBudget(dossier: any) {
+  const approvedAmount = toNumber(dossier.disbursementTotal);
+  const allocatedAmount = roundMoney(
+    dossier.buyerAllocations.reduce((sum: number, allocation: any) => sum + toNumber(allocation.amountAllocated), 0)
+  );
+  const remainingAmount = roundMoney(Math.max(0, approvedAmount - allocatedAmount));
+
+  return {
+    id: dossier.id,
+    title: dossier.title,
+    status: dossier.status,
+    disbursementMethod: dossier.disbursementMethod,
+    accountingExecutedAt: dossier.accountingExecutedAt,
+    createdAt: dossier.createdAt,
+    updatedAt: dossier.updatedAt,
+    approvedAmount,
+    allocatedAmount,
+    remainingAmount,
+    linkedAllocationsCount: dossier.buyerAllocations.length,
   };
 }
 
@@ -146,10 +186,51 @@ export async function createAllocation(allocatedById: string, data: CreateBuyerA
   }
 
   const allocation = await prisma.$transaction(async (tx) => {
+    if (data.sourceDossierId) {
+      const dossier = await tx.dossier.findFirst({
+        where: {
+          id: data.sourceDossierId,
+          status: 'COMPLETED',
+        },
+        select: {
+          id: true,
+          title: true,
+          disbursementTotal: true,
+          buyerAllocations: {
+            select: {
+              amountAllocated: true,
+            },
+          },
+        },
+      });
+
+      if (!dossier) {
+        throw createError('Le dossier source est introuvable ou pas encore approuvé', 404);
+      }
+
+      const alreadyAllocated = dossier.buyerAllocations.reduce(
+        (sum, allocation) => sum + toNumber(allocation.amountAllocated),
+        0
+      );
+      const approvedAmount = toNumber(dossier.disbursementTotal);
+      const remainingBudget = roundMoney(Math.max(0, approvedAmount - alreadyAllocated));
+
+      if (roundMoney(data.amountAllocated) > remainingBudget + 0.001) {
+        throw createError(
+          `Cette allocation dépasse l’enveloppe restante du dossier (${remainingBudget.toLocaleString('fr-FR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} HTG).`,
+          400
+        );
+      }
+    }
+
     const created = await tx.buyerAllocation.create({
       data: {
         buyerId: data.buyerId,
         allocatedById,
+        sourceDossierId: data.sourceDossierId || null,
         title: data.title.trim(),
         description: data.description?.trim() || null,
         amountAllocated: new Prisma.Decimal(roundMoney(data.amountAllocated).toFixed(2)),
@@ -200,7 +281,7 @@ export async function createFundRequest(buyerId: string, data: CreateBuyerFundRe
 }
 
 export async function getBoardOverview() {
-  const [buyers, allocations, fundRequests] = await Promise.all([
+  const [buyers, allocations, fundRequests, approvedBudgets] = await Promise.all([
     getBuyerOptions(),
     prisma.buyerAllocation.findMany({
       include: buyerAllocationInclude,
@@ -210,10 +291,29 @@ export async function getBoardOverview() {
       include: buyerFundRequestInclude,
       orderBy: [{ createdAt: 'desc' }],
     }),
+    prisma.dossier.findMany({
+      where: {
+        status: 'COMPLETED',
+      },
+      select: {
+        ...dossierBudgetSelect,
+        buyerAllocations: {
+          select: {
+            id: true,
+            amountAllocated: true,
+          },
+        },
+      },
+      orderBy: [{ updatedAt: 'desc' }],
+    }),
   ]);
 
   const serializedAllocations = allocations.map(serializeAllocation);
   const serializedRequests = fundRequests.map(serializeFundRequest);
+  const serializedBudgets = approvedBudgets.map(serializeApprovedBudget);
+  const approvedBudgetTotal = serializedBudgets.reduce((sum, dossier) => sum + dossier.approvedAmount, 0);
+  const approvedBudgetAllocated = serializedBudgets.reduce((sum, dossier) => sum + dossier.allocatedAmount, 0);
+  const approvedBudgetRemaining = serializedBudgets.reduce((sum, dossier) => sum + dossier.remainingAmount, 0);
 
   return {
     buyers,
@@ -221,9 +321,13 @@ export async function getBoardOverview() {
       ...buildOverview(serializedAllocations),
       totalBuyers: buyers.length,
       pendingRequests: serializedRequests.filter((request) => request.status === 'PENDING').length,
+      approvedBudgetTotal: roundMoney(approvedBudgetTotal),
+      approvedBudgetAllocated: roundMoney(approvedBudgetAllocated),
+      approvedBudgetRemaining: roundMoney(approvedBudgetRemaining),
     },
     allocations: serializedAllocations,
     fundRequests: serializedRequests,
+    approvedBudgets: serializedBudgets,
   };
 }
 

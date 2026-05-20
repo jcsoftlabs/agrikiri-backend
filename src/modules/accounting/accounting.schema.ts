@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const validateOutflowSchema = z.object({
-  type: z.enum(['BUYER_REPORT', 'DELIVERY_REPORT']),
+  type: z.enum(['BUYER_ALLOCATION', 'BUYER_REPORT', 'DELIVERY_REPORT']),
   id: z.string().uuid('Identifiant invalide'),
 });
 

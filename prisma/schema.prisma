@@ -580,11 +580,15 @@ model BuyerAllocation {
   buyer             User                  @relation("BuyerAllocations", fields: [buyerId], references: [id])
   allocatedById     String
   allocatedBy       User                  @relation("BuyerAllocatedBy", fields: [allocatedById], references: [id])
+  sourceDossierId   String?
+  sourceDossier     Dossier?              @relation("DossierBuyerAllocations", fields: [sourceDossierId], references: [id])
   title             String
   description       String?
   amountAllocated   Decimal               @db.Decimal(10, 2)
   disbursementMethod AccountingChannel    @default(CASH)
   status            BuyerAllocationStatus @default(PENDING_CONFIRMATION)
+  accountingValidatedAt DateTime?
+  accountingValidatedById String?
   receivedConfirmedAt DateTime?
   reports           BuyerExpenseReport[]
   createdAt         DateTime              @default(now())
@@ -592,6 +596,7 @@ model BuyerAllocation {
 
   @@index([buyerId, status])
   @@index([allocatedById])
+  @@index([sourceDossierId])
 }
 
 model BuyerExpenseReport {
@@ -669,6 +674,7 @@ model Dossier {
   votes       Vote[]
   comments    DossierComment[]
   decisions   DossierDecision[]
+  buyerAllocations BuyerAllocation[] @relation("DossierBuyerAllocations")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

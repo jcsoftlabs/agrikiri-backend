@@ -51,6 +51,10 @@ function toNumber(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function roundMoney(value: number) {
+  return Number(value.toFixed(2));
+}
+
 function formatDayLabel(date: Date) {
   return date.toLocaleDateString('fr-HT', { day: 'numeric', month: 'short' });
 }
@@ -115,6 +119,19 @@ type AccountingOperation = {
   createdAt: string;
   direction: 'INFLOW' | 'OUTFLOW';
   status: 'completed' | 'pending' | 'validated' | 'executed' | 'reconciled';
+};
+
+type ApprovedBudgetEnvelope = {
+  id: string;
+  title: string;
+  method: string;
+  approvedAmount: number;
+  allocatedAmount: number;
+  pendingAmount: number;
+  remainingAmount: number;
+  createdAt: string;
+  accountingExecutedAt: string | null;
+  linkedAllocationsCount: number;
 };
 
 async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
@@ -185,6 +202,8 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         title: true,
         amountAllocated: true,
         disbursementMethod: true,
+        sourceDossierId: true,
+        accountingValidatedAt: true,
         status: true,
         createdAt: true,
         buyer: { select: { firstName: true, lastName: true } },
@@ -203,6 +222,13 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         disbursementMethod: true,
         accountingExecutedAt: true,
         updatedAt: true,
+        buyerAllocations: {
+          select: {
+            id: true,
+            amountAllocated: true,
+            accountingValidatedAt: true,
+          },
+        },
         author: { select: { firstName: true, lastName: true } },
       },
       orderBy: { updatedAt: 'asc' },
@@ -330,12 +356,6 @@ function buildTimeline(
     if (day) day.outflows += toNumber(allocation.amountAllocated);
   }
 
-  for (const dossier of data.completedDossiers) {
-    const key = dossier.updatedAt.toISOString().slice(0, 10);
-    const day = byKey.get(key);
-    if (day) day.outflows += toNumber(dossier.disbursementTotal);
-  }
-
   for (const report of data.deliveryReports) {
     const key = report.createdAt.toISOString().slice(0, 10);
     const day = byKey.get(key);
@@ -370,6 +390,14 @@ function buildAlerts(current: ReturnType<typeof buildOverview>, previous: Return
     });
   }
 
+  if (current.pendingBuyerAllocationAmount > 0) {
+    alerts.push({
+      level: 'info',
+      title: 'Allocations en attente de confirmation comptable',
+      message: `${Math.round(current.pendingBuyerAllocationAmount).toLocaleString('fr-FR')} HTG sont approuvés par le PDG mais pas encore déduits comptablement.`,
+    });
+  }
+
   if (current.pendingFundRequestsAmount > 0) {
     alerts.push({
       level: 'info',
@@ -378,11 +406,11 @@ function buildAlerts(current: ReturnType<typeof buildOverview>, previous: Return
     });
   }
 
-  if (current.approvedDossierDisbursements > 0) {
+  if (current.approvedBudgetTotal > 0) {
     alerts.push({
       level: 'info',
-      title: 'Décaissements dossiers validés',
-      message: `${Math.round(current.approvedDossierDisbursements).toLocaleString('fr-FR')} HTG issus de dossiers approuvés impactent la trésorerie.`,
+      title: 'Budgets associés disponibles',
+      message: `${Math.round(current.approvedBudgetRemaining).toLocaleString('fr-FR')} HTG restent disponibles dans les enveloppes approuvées.`,
     });
   }
 
@@ -411,11 +439,24 @@ function buildOverview(data: DashboardPeriodData) {
     .filter((sale) => sale.documentType !== 'PROFORMA')
     .reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
   const deliveryCashCollected = data.deliveryReports.reduce((sum, report) => sum + toNumber(report.cashCollected), 0);
-  const buyerAllocated = data.allocations.reduce((sum, allocation) => sum + toNumber(allocation.amountAllocated), 0);
-  const approvedDossierDisbursements = data.completedDossiers.reduce(
-    (sum, dossier) => sum + toNumber(dossier.disbursementTotal),
+  const buyerAllocated = data.allocations
+    .filter((allocation) => Boolean(allocation.accountingValidatedAt))
+    .reduce((sum, allocation) => sum + toNumber(allocation.amountAllocated), 0);
+  const pendingBuyerAllocationAmount = data.allocations
+    .filter((allocation) => !allocation.accountingValidatedAt)
+    .reduce((sum, allocation) => sum + toNumber(allocation.amountAllocated), 0);
+  const approvedBudgetTotal = data.completedDossiers.reduce((sum, dossier) => sum + toNumber(dossier.disbursementTotal), 0);
+  const approvedBudgetAllocated = data.completedDossiers.reduce(
+    (sum, dossier) =>
+      sum +
+      dossier.buyerAllocations.reduce(
+        (allocationSum, allocation: any) =>
+          allocationSum + (allocation.accountingValidatedAt ? toNumber(allocation.amountAllocated) : 0),
+        0
+      ),
     0
   );
+  const approvedBudgetRemaining = roundMoney(Math.max(0, approvedBudgetTotal - approvedBudgetAllocated));
   const buyerSpent = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalSpent), 0);
   const buyerFees = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalFees), 0);
   const buyerReported = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalReported), 0);
@@ -424,7 +465,7 @@ function buildOverview(data: DashboardPeriodData) {
   const pendingCodAmount = data.deliveredCashOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
   const pendingBuyerBalance = data.buyerReports.reduce((sum, report) => sum + toNumber(report.remainingAmount), 0);
   const totalInflows = totalOnlinePaid + totalPosSales + deliveryCashCollected;
-  const totalOutflows = buyerAllocated + approvedDossierDisbursements + deliveryFieldExpenses;
+  const totalOutflows = buyerAllocated + deliveryFieldExpenses;
 
   return {
     totalInflows,
@@ -434,7 +475,10 @@ function buildOverview(data: DashboardPeriodData) {
     totalPosSales,
     deliveryCashCollected,
     buyerAllocated,
-    approvedDossierDisbursements,
+    pendingBuyerAllocationAmount,
+    approvedBudgetTotal,
+    approvedBudgetAllocated,
+    approvedBudgetRemaining,
     buyerSpent,
     buyerFees,
     buyerReported,
@@ -470,14 +514,44 @@ function buildMethodBreakdowns(data: DashboardPeriodData) {
     pushMethodAmount(outflows, allocation.disbursementMethod, toNumber(allocation.amountAllocated));
   }
 
-  for (const dossier of data.completedDossiers) {
-    pushMethodAmount(outflows, dossier.disbursementMethod, toNumber(dossier.disbursementTotal));
-  }
-
   return {
     inflows: toMethodRows(inflows),
     outflows: toMethodRows(outflows),
   };
+}
+
+function buildApprovedBudgetEnvelopes(data: DashboardPeriodData): ApprovedBudgetEnvelope[] {
+  return data.completedDossiers
+    .map((dossier) => {
+      const approvedAmount = toNumber(dossier.disbursementTotal);
+      const allocatedAmount = roundMoney(
+        dossier.buyerAllocations.reduce(
+          (sum, allocation: any) => sum + (allocation.accountingValidatedAt ? toNumber(allocation.amountAllocated) : 0),
+          0
+        )
+      );
+      const pendingAmount = roundMoney(
+        dossier.buyerAllocations.reduce(
+          (sum, allocation: any) => sum + (!allocation.accountingValidatedAt ? toNumber(allocation.amountAllocated) : 0),
+          0
+        )
+      );
+      const remainingAmount = roundMoney(Math.max(0, approvedAmount - allocatedAmount));
+
+      return {
+        id: dossier.id,
+        title: dossier.title,
+        method: formatChannelLabel(dossier.disbursementMethod),
+        approvedAmount,
+        allocatedAmount,
+        pendingAmount,
+        remainingAmount,
+        createdAt: dossier.updatedAt.toISOString(),
+        accountingExecutedAt: dossier.accountingExecutedAt?.toISOString() || null,
+        linkedAllocationsCount: dossier.buyerAllocations.length,
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 function escapeCsv(value: string | number | null | undefined) {
@@ -536,7 +610,11 @@ function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
       method: formatChannelLabel(allocation.disbursementMethod),
       createdAt: allocation.createdAt.toISOString(),
       direction: 'OUTFLOW' as const,
-      status: allocation.status === 'PENDING_CONFIRMATION' ? ('pending' as const) : ('completed' as const),
+      status: allocation.accountingValidatedAt
+        ? ('validated' as const)
+        : allocation.status === 'PENDING_CONFIRMATION'
+          ? ('pending' as const)
+          : ('completed' as const),
     })),
     ...data.buyerReports.map((report) => ({
       id: `buyer-report-${report.id}`,
@@ -562,17 +640,6 @@ function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
         direction: 'OUTFLOW' as const,
         status: report.accountingValidatedAt ? ('validated' as const) : ('pending' as const),
       })),
-    ...data.completedDossiers.map((dossier) => ({
-      id: `dossier-${dossier.id}`,
-      type: 'Dossier approuvé',
-      label: dossier.title,
-      counterparty: `${dossier.author.firstName} ${dossier.author.lastName}`,
-      amount: toNumber(dossier.disbursementTotal),
-      method: formatChannelLabel(dossier.disbursementMethod),
-      createdAt: dossier.updatedAt.toISOString(),
-      direction: 'OUTFLOW' as const,
-      status: dossier.accountingExecutedAt ? ('executed' as const) : ('pending' as const),
-    })),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
@@ -607,6 +674,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
   const previousOverview = buildOverview(previousData);
   const timeline = buildTimeline(days, startDate, currentData);
   const methodBreakdowns = buildMethodBreakdowns(currentData);
+  const approvedBudgetEnvelopes = buildApprovedBudgetEnvelopes(currentData);
 
   const openAllocationBalance = globalOpenAllocations.reduce((sum, allocation) => {
     const reported = allocation.reports.reduce((reportSum, report) => reportSum + toNumber(report.totalReported), 0);
@@ -668,7 +736,6 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
     },
     disbursements: {
       buyerAllocated: overview.buyerAllocated,
-      approvedDossierDisbursements: overview.approvedDossierDisbursements,
       buyerSpent: overview.buyerSpent,
       buyerFees: overview.buyerFees,
       buyerReported: overview.buyerReported,
@@ -676,6 +743,14 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       pendingFundRequestsAmount: overview.pendingFundRequestsAmount,
       pendingFundRequestsCount: overview.pendingFundRequestsCount,
       byMethod: methodBreakdowns.outflows,
+    },
+    budgetEnvelopes: {
+      totalApproved: overview.approvedBudgetTotal,
+      totalAllocated: overview.approvedBudgetAllocated,
+      totalRemaining: overview.approvedBudgetRemaining,
+      totalPending: overview.pendingBuyerAllocationAmount,
+      pendingExecutionCount: currentData.completedDossiers.filter((dossier) => !dossier.accountingExecutedAt).length,
+      items: approvedBudgetEnvelopes,
     },
     reconciliation: {
       pendingCodCount: currentData.deliveredCashOrders.length,
@@ -707,6 +782,18 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       amountRequested: toNumber(request.amountRequested),
       createdAt: request.createdAt.toISOString(),
     })),
+    pendingBuyerAllocations: currentData.allocations
+      .filter((allocation) => !allocation.accountingValidatedAt)
+      .slice(-10)
+      .reverse()
+      .map((allocation) => ({
+        id: allocation.id,
+        title: allocation.title,
+        buyer: `${allocation.buyer.firstName} ${allocation.buyer.lastName}`,
+        amount: toNumber(allocation.amountAllocated),
+        method: formatChannelLabel(allocation.disbursementMethod),
+        createdAt: allocation.createdAt.toISOString(),
+      })),
     pendingBuyerReports: currentData.buyerReports
       .filter((report) => !report.accountingValidatedAt)
       .slice(-10)
@@ -793,7 +880,25 @@ export async function reconcileCashOrder(orderId: string, userId: string) {
   });
 }
 
-export async function validateOutflow(userId: string, payload: { type: 'BUYER_REPORT' | 'DELIVERY_REPORT'; id: string }) {
+export async function validateOutflow(userId: string, payload: { type: 'BUYER_ALLOCATION' | 'BUYER_REPORT' | 'DELIVERY_REPORT'; id: string }) {
+  if (payload.type === 'BUYER_ALLOCATION') {
+    const allocation = await prisma.buyerAllocation.findUnique({
+      where: { id: payload.id },
+      select: { id: true, accountingValidatedAt: true, amountAllocated: true },
+    });
+    if (!allocation) throw createError('Allocation acheteur introuvable', 404);
+    if (allocation.accountingValidatedAt) throw createError('Cette allocation a déjà été validée comptablement', 400);
+
+    return prisma.buyerAllocation.update({
+      where: { id: payload.id },
+      data: {
+        accountingValidatedAt: new Date(),
+        accountingValidatedById: userId,
+      },
+      select: { id: true, accountingValidatedAt: true, amountAllocated: true },
+    });
+  }
+
   if (payload.type === 'BUYER_REPORT') {
     const report = await prisma.buyerExpenseReport.findUnique({
       where: { id: payload.id },

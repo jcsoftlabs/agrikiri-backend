@@ -13,6 +13,7 @@ const accountingChannelEnum = z.enum([
 
 export const createBuyerAllocationSchema = z.object({
   buyerId: z.string().uuid('Acheteur invalide'),
+  sourceDossierId: z.string().uuid('Dossier source invalide').optional(),
   title: z.string().trim().min(3, 'Le libellé est requis').max(120, 'Le libellé est trop long'),
   description: z.string().trim().max(500, 'La note est trop longue').optional(),
   fundRequestId: z.string().uuid('Demande de fonds invalide').optional(),
