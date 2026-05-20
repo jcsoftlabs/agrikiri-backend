@@ -53,6 +53,8 @@ enum PaymentMethod {
   PLOPPLOP
   MONCASH
   CASH
+  CHEQUE
+  VIREMENT_BANCAIRE
   NATCASH
   KASHPAW
 }

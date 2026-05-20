@@ -262,3 +262,86 @@ export async function createPosSale(adminUserId: string, payload: CreatePosSaleI
 
   return sale;
 }
+
+export async function convertProformaToInvoice(
+  adminUserId: string,
+  saleId: string,
+  payload: { paymentMethod: NonNullable<CreatePosSaleInput['paymentMethod']> }
+) {
+  const existingSale = await prisma.posSale.findUnique({
+    where: { id: saleId },
+    include: {
+      items: true,
+      createdBy: { select: { firstName: true, lastName: true, email: true } },
+    },
+  });
+
+  if (!existingSale) {
+    throw createError('Document POS introuvable', 404);
+  }
+
+  if (existingSale.documentType !== 'PROFORMA' || existingSale.status !== 'DRAFT') {
+    throw createError('Seule une proforma en brouillon peut etre transformee en facture.', 400);
+  }
+
+  const invoiceNumber = generatePosSaleNumber('INVOICE');
+
+  const sale = await prisma.$transaction(async (tx) => {
+    for (const item of existingSale.items) {
+      if (item.productVariantId) {
+        const variant = await tx.productVariant.findUnique({
+          where: { id: item.productVariantId },
+        });
+
+        if (!variant) {
+          throw createError(`La variante de "${item.description}" est introuvable.`, 404);
+        }
+
+        if (variant.stockQuantity < item.quantity) {
+          throw createError(`Stock insuffisant pour "${item.description}". Disponible: ${variant.stockQuantity}`, 400);
+        }
+
+        await tx.productVariant.update({
+          where: { id: item.productVariantId },
+          data: { stockQuantity: { decrement: item.quantity } },
+        });
+      } else {
+        const product = await tx.product.findUnique({
+          where: { id: item.productId },
+        });
+
+        if (!product) {
+          throw createError(`Le produit de "${item.description}" est introuvable.`, 404);
+        }
+
+        if (product.stockQuantity < item.quantity) {
+          throw createError(`Stock insuffisant pour "${item.description}". Disponible: ${product.stockQuantity}`, 400);
+        }
+      }
+
+      await syncParentProductSnapshot(tx, item.productId, item.quantity);
+    }
+
+    return tx.posSale.update({
+      where: { id: saleId },
+      data: {
+        saleNumber: invoiceNumber,
+        documentType: 'INVOICE',
+        status: 'COMPLETED',
+        paymentMethod: payload.paymentMethod,
+        createdById: adminUserId,
+      },
+      include: {
+        items: {
+          include: {
+            product: { select: { name: true, images: { orderBy: { order: 'asc' }, take: 1 } } },
+            productVariant: { select: { id: true, label: true } },
+          },
+        },
+        createdBy: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+  });
+
+  return sale;
+}

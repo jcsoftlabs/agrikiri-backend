@@ -8,6 +8,7 @@ router.use(authenticate, requirePosAccess);
 
 router.get('/', controller.listPosSales);
 router.post('/', controller.createPosSale);
+router.post('/:id/convert-to-invoice', controller.convertProformaToInvoice);
 router.get('/:id/document', controller.downloadPosDocument);
 router.get('/:id', controller.getPosSaleById);
 

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 const posDocumentTypeEnum = z.enum(['RECEIPT', 'INVOICE', 'PROFORMA']);
-const paymentMethodEnum = z.enum(['PLOPPLOP', 'MONCASH', 'CASH', 'NATCASH', 'KASHPAW']);
+const paymentMethodEnum = z.enum(['PLOPPLOP', 'MONCASH', 'CASH', 'CHEQUE', 'VIREMENT_BANCAIRE', 'NATCASH', 'KASHPAW']);
 const customerTypeEnum = z.enum(['WALK_IN', 'INDIVIDUAL', 'BUSINESS']);
 
 export const posSaleItemSchema = z.object({
@@ -29,4 +29,8 @@ export const createPosSaleSchema = z.object({
 
 export const posDocumentQuerySchema = z.object({
   type: posDocumentTypeEnum.optional(),
+});
+
+export const convertProformaToInvoiceSchema = z.object({
+  paymentMethod: paymentMethodEnum,
 });

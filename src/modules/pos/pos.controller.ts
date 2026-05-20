@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import PDFDocument from 'pdfkit';
 import { AuthRequest } from '../../middleware/auth.middleware';
 import * as posService from './pos.service';
-import { createPosSaleSchema, posDocumentQuerySchema } from './pos.schema';
+import { convertProformaToInvoiceSchema, createPosSaleSchema, posDocumentQuerySchema } from './pos.schema';
 
 const FRONTEND_URL = (process.env.FRONTEND_URL || 'https://agrikiri.vercel.app').replace(/\/+$/, '');
 const LOGO_URL = `${FRONTEND_URL}/images/logo.png`;
@@ -32,9 +32,11 @@ function formatPaymentMethod(method?: string | null) {
   const labels: Record<string, string> = {
     PLOPPLOP: 'PLOP PLOP',
     MONCASH: 'MonCash',
+    CHEQUE: 'Cheque',
+    VIREMENT_BANCAIRE: 'Virement bancaire',
     NATCASH: 'NatCash',
     KASHPAW: 'Kashpaw',
-    CASH: 'Espèces',
+    CASH: 'CASH',
   };
 
   return method ? labels[method] || method : 'Non renseigné';
@@ -412,6 +414,16 @@ export async function getPosSaleById(req: AuthRequest, res: Response, next: Next
   try {
     const data = await posService.getPosSaleById(req.params.id);
     res.json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function convertProformaToInvoice(req: AuthRequest, res: Response, next: NextFunction) {
+  try {
+    const payload = convertProformaToInvoiceSchema.parse(req.body);
+    const data = await posService.convertProformaToInvoice(req.user!.userId, req.params.id, payload);
+    res.json({ success: true, message: 'Proforma transformee en facture avec succes', data });
   } catch (error) {
     next(error);
   }
