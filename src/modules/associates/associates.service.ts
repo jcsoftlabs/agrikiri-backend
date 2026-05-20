@@ -16,17 +16,29 @@ const DOSSIER_VOTE_QUORUM = 3;
 // ================================
 
 export async function getAllDossiers() {
-  return prisma.dossier.findMany({
+  const dossiers = await prisma.dossier.findMany({
     include: {
       author: {
         select: { firstName: true, lastName: true }
       },
       _count: {
         select: { documents: true, votes: true }
+      },
+      votes: {
+        select: {
+          _count: {
+            select: { ballots: true }
+          }
+        }
       }
     },
     orderBy: { createdAt: 'desc' }
   });
+
+  return dossiers.map(({ votes, ...dossier }) => ({
+    ...dossier,
+    voteBallotsCount: votes.reduce((sum, vote) => sum + vote._count.ballots, 0),
+  }));
 }
 
 export async function getDossierById(id: string) {
