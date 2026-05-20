@@ -76,6 +76,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
     posSales,
     deliveryReports,
     allocations,
+    completedDossiers,
     buyerReports,
     pendingFundRequests,
     deliveredCashOrders,
@@ -136,6 +137,20 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         buyer: { select: { firstName: true, lastName: true } },
       },
       orderBy: { createdAt: 'asc' },
+    }),
+    prisma.dossier.findMany({
+      where: {
+        status: 'COMPLETED',
+        updatedAt: rangeWhere,
+      },
+      select: {
+        id: true,
+        title: true,
+        disbursementTotal: true,
+        updatedAt: true,
+        author: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { updatedAt: 'asc' },
     }),
     prisma.buyerExpenseReport.findMany({
       where: { createdAt: rangeWhere },
@@ -212,6 +227,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
     posSales,
     deliveryReports,
     allocations,
+    completedDossiers,
     buyerReports,
     pendingFundRequests,
     deliveredCashOrders,
@@ -258,6 +274,12 @@ function buildTimeline(
     if (day) day.outflows += toNumber(allocation.amountAllocated);
   }
 
+  for (const dossier of data.completedDossiers) {
+    const key = dossier.updatedAt.toISOString().slice(0, 10);
+    const day = byKey.get(key);
+    if (day) day.outflows += toNumber(dossier.disbursementTotal);
+  }
+
   for (const report of data.deliveryReports) {
     const key = report.createdAt.toISOString().slice(0, 10);
     const day = byKey.get(key);
@@ -300,6 +322,14 @@ function buildAlerts(current: ReturnType<typeof buildOverview>, previous: Return
     });
   }
 
+  if (current.approvedDossierDisbursements > 0) {
+    alerts.push({
+      level: 'info',
+      title: 'Décaissements dossiers validés',
+      message: `${Math.round(current.approvedDossierDisbursements).toLocaleString('fr-FR')} HTG issus de dossiers approuvés impactent la trésorerie.`,
+    });
+  }
+
   if (revenueDelta.direction === 'up' && revenueDelta.percent >= 10) {
     alerts.push({
       level: 'success',
@@ -326,6 +356,10 @@ function buildOverview(data: DashboardPeriodData) {
     .reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
   const deliveryCashCollected = data.deliveryReports.reduce((sum, report) => sum + toNumber(report.cashCollected), 0);
   const buyerAllocated = data.allocations.reduce((sum, allocation) => sum + toNumber(allocation.amountAllocated), 0);
+  const approvedDossierDisbursements = data.completedDossiers.reduce(
+    (sum, dossier) => sum + toNumber(dossier.disbursementTotal),
+    0
+  );
   const buyerSpent = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalSpent), 0);
   const buyerFees = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalFees), 0);
   const buyerReported = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalReported), 0);
@@ -334,7 +368,7 @@ function buildOverview(data: DashboardPeriodData) {
   const pendingCodAmount = data.deliveredCashOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
   const pendingBuyerBalance = data.buyerReports.reduce((sum, report) => sum + toNumber(report.remainingAmount), 0);
   const totalInflows = totalOnlinePaid + totalPosSales + deliveryCashCollected;
-  const totalOutflows = buyerAllocated + deliveryFieldExpenses;
+  const totalOutflows = buyerAllocated + approvedDossierDisbursements + deliveryFieldExpenses;
 
   return {
     totalInflows,
@@ -344,6 +378,7 @@ function buildOverview(data: DashboardPeriodData) {
     totalPosSales,
     deliveryCashCollected,
     buyerAllocated,
+    approvedDossierDisbursements,
     buyerSpent,
     buyerFees,
     buyerReported,
@@ -418,6 +453,14 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       amount: toNumber(allocation.amountAllocated),
       createdAt: allocation.createdAt.toISOString(),
     })),
+    ...currentData.completedDossiers.slice(-4).map((dossier) => ({
+      id: `dossier-${dossier.id}`,
+      type: 'Dossier approuvé',
+      label: dossier.title,
+      counterparty: `${dossier.author.firstName} ${dossier.author.lastName}`,
+      amount: toNumber(dossier.disbursementTotal),
+      createdAt: dossier.updatedAt.toISOString(),
+    })),
   ]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 10);
@@ -446,6 +489,7 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
     },
     disbursements: {
       buyerAllocated: overview.buyerAllocated,
+      approvedDossierDisbursements: overview.approvedDossierDisbursements,
       buyerSpent: overview.buyerSpent,
       buyerFees: overview.buyerFees,
       buyerReported: overview.buyerReported,
