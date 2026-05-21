@@ -329,3 +329,45 @@ export async function getBoardDeliveryReports() {
     reports: serialized,
   };
 }
+
+async function ensureReportAccess(reportId: string, actor: { userId: string; role: string }) {
+  const report = await prisma.deliveryAgentReport.findUnique({
+    where: { id: reportId },
+    include: {
+      deliveryAgent: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          phone: true,
+          email: true,
+        },
+      },
+      deliveryNote: {
+        select: {
+          id: true,
+          noteNumber: true,
+          status: true,
+          customerName: true,
+          totalQuantity: true,
+          totalWeightLbs: true,
+          receiverName: true,
+        },
+      },
+    },
+  });
+
+  if (!report) {
+    throw createError('Rapport livreur introuvable.', 404);
+  }
+
+  if (actor.role === 'DELIVERY_AGENT' && report.deliveryAgentId !== actor.userId) {
+    throw createError('Accès refusé à ce rapport livreur.', 403);
+  }
+
+  return serializeReport(report);
+}
+
+export async function getDeliveryReportById(reportId: string, actor: { userId: string; role: string }) {
+  return ensureReportAccess(reportId, actor);
+}

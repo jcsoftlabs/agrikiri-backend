@@ -21,6 +21,27 @@ export const createDeliveryNoteSchema = z.object({
 export const updateDeliveryNoteStatusSchema = z.object({
   status: deliveryNoteStatusEnum,
   notes: z.string().trim().max(1000, 'Notes trop longues').optional().nullable(),
+  receiverName: z.string().trim().max(160, 'Le nom du receveur est trop long').optional().nullable(),
+  receiverSignatureUrl: z.string().trim().url('Signature invalide').optional().nullable(),
+  receiverSignaturePublicId: z.string().trim().max(255).optional().nullable(),
+}).superRefine((data, ctx) => {
+  if (data.status === 'DELIVERED') {
+    if (!data.receiverName?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receiverName'],
+        message: 'Le nom du receveur est requis pour marquer le bon comme livré.',
+      });
+    }
+
+    if (!data.receiverSignatureUrl || !data.receiverSignaturePublicId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receiverSignatureUrl'],
+        message: 'La signature du receveur est requise pour marquer le bon comme livré.',
+      });
+    }
+  }
 });
 
 export type CreateDeliveryNoteInput = z.infer<typeof createDeliveryNoteSchema>;

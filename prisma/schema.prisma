@@ -462,6 +462,9 @@ model DeliveryNote {
   customerName     String
   customerPhone    String?
   customerAddress  String?
+  receiverName     String?
+  receiverSignatureUrl String?
+  receiverSignaturePublicId String?
   notes            String?
   totalQuantity    Int                    @default(0)
   totalWeightLbs   Decimal                @default(0) @db.Decimal(10, 2)

@@ -11,12 +11,12 @@ const asyncHandler =
 router.use(authenticate);
 
 router.get('/my', requireRole('DELIVERY_AGENT'), asyncHandler(controller.listMyDeliveryNotes));
-router.post('/orders/:orderId', requireRole('ADMIN', 'DELIVERY_AGENT'), asyncHandler(controller.createOrderDeliveryNote));
-router.get('/orders/:orderId', requireRole('ADMIN', 'DELIVERY_AGENT'), asyncHandler(controller.listOrderDeliveryNotes));
-router.post('/pos-sales/:posSaleId', requireRole('ADMIN', 'CASHIER', 'DELIVERY_AGENT'), asyncHandler(controller.createPosSaleDeliveryNote));
-router.get('/pos-sales/:posSaleId', requireRole('ADMIN', 'CASHIER', 'DELIVERY_AGENT'), asyncHandler(controller.listPosSaleDeliveryNotes));
-router.get('/:id/document', requireRole('ADMIN', 'CASHIER', 'DELIVERY_AGENT'), asyncHandler(controller.downloadDeliveryNotePdf));
-router.get('/:id', requireRole('ADMIN', 'CASHIER', 'DELIVERY_AGENT'), asyncHandler(controller.getDeliveryNoteById));
+router.post('/orders/:orderId', requireRole('ADMIN', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.createOrderDeliveryNote));
+router.get('/orders/:orderId', requireRole('ADMIN', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.listOrderDeliveryNotes));
+router.post('/pos-sales/:posSaleId', requireRole('ADMIN', 'CASHIER', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.createPosSaleDeliveryNote));
+router.get('/pos-sales/:posSaleId', requireRole('ADMIN', 'CASHIER', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.listPosSaleDeliveryNotes));
+router.get('/:id/document', requireRole('ADMIN', 'CASHIER', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.downloadDeliveryNotePdf));
+router.get('/:id', requireRole('ADMIN', 'CASHIER', 'STOCK_MANAGER', 'DELIVERY_AGENT'), asyncHandler(controller.getDeliveryNoteById));
 router.patch('/:id/status', requireRole('ADMIN', 'DELIVERY_AGENT'), asyncHandler(controller.updateDeliveryNoteStatus));
 
 export default router;

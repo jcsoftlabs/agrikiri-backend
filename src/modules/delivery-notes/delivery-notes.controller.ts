@@ -31,7 +31,20 @@ async function getDeliveryLogoBuffer() {
   }
 }
 
-function renderDeliveryNotePdf(doc: PDFKit.PDFDocument, note: any, logoBuffer: Buffer | null) {
+async function getRemoteImageBuffer(url?: string | null) {
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch {
+    return null;
+  }
+}
+
+function renderDeliveryNotePdf(doc: PDFKit.PDFDocument, note: any, logoBuffer: Buffer | null, signatureBuffer: Buffer | null) {
   doc.roundedRect(40, 36, 515, 94, 18).fill('#f4f1e8');
 
   if (logoBuffer) {
@@ -67,6 +80,7 @@ function renderDeliveryNotePdf(doc: PDFKit.PDFDocument, note: any, logoBuffer: B
   doc.fillColor('#16341f').font('Helvetica-Bold').fontSize(11).text('Destinataire', 325, infoY + 14);
   [
     note.customerName,
+    note.receiverName ? `Receveur: ${note.receiverName}` : '',
     note.customerPhone || '',
     note.customerAddress || '',
   ].filter(Boolean).forEach((line, index) => {
@@ -112,6 +126,24 @@ function renderDeliveryNotePdf(doc: PDFKit.PDFDocument, note: any, logoBuffer: B
   if (note.notes) {
     doc.fillColor('#16341f').font('Helvetica-Bold').fontSize(11).text('Notes', 40, totalsTop + 8);
     doc.fillColor('#334155').font('Helvetica').fontSize(10).text(note.notes, 40, totalsTop + 28, { width: 250, lineGap: 3 });
+  }
+
+  if (note.receiverName || signatureBuffer) {
+    const proofTop = totalsTop + 102;
+    doc.roundedRect(316, proofTop, 239, 96, 14).fill('#ffffff');
+    doc.fillColor('#16341f').font('Helvetica-Bold').fontSize(12).text('Preuve de réception', 334, proofTop + 14);
+    doc.fillColor('#334155').font('Helvetica').fontSize(10).text(
+      note.receiverName ? `Receveur: ${note.receiverName}` : 'Receveur non renseigné',
+      334,
+      proofTop + 38,
+      { width: 190 }
+    );
+
+    if (signatureBuffer) {
+      doc.image(signatureBuffer, 334, proofTop + 56, { fit: [150, 30] });
+    } else {
+      doc.fillColor('#94a3b8').font('Helvetica-Oblique').fontSize(9).text('Signature non jointe', 334, proofTop + 68);
+    }
   }
 
   doc.fillColor('#64748b').font('Helvetica').fontSize(9).text(
@@ -194,13 +226,16 @@ export async function downloadDeliveryNotePdf(req: Request, res: Response, next:
     const note = await deliveryNotesService.getDeliveryNoteById(req.params.id, authReq.user!);
     const filename = `BON_LIVRAISON_${note.noteNumber}.pdf`;
     const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
-    const logoBuffer = await getDeliveryLogoBuffer();
+    const [logoBuffer, signatureBuffer] = await Promise.all([
+      getDeliveryLogoBuffer(),
+      getRemoteImageBuffer(note.receiverSignatureUrl),
+    ]);
 
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Type', 'application/pdf');
 
     doc.pipe(res);
-    renderDeliveryNotePdf(doc, note, logoBuffer);
+    renderDeliveryNotePdf(doc, note, logoBuffer, signatureBuffer);
     doc.end();
   } catch (error) {
     next(error);

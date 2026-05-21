@@ -526,6 +526,18 @@ export async function updateDeliveryNoteStatus(
       data: {
         status: payload.status,
         notes: payload.notes?.trim() || note.notes,
+        receiverName:
+          payload.status === DeliveryNoteStatus.DELIVERED
+            ? payload.receiverName?.trim() || note.receiverName
+            : note.receiverName,
+        receiverSignatureUrl:
+          payload.status === DeliveryNoteStatus.DELIVERED
+            ? payload.receiverSignatureUrl || note.receiverSignatureUrl
+            : note.receiverSignatureUrl,
+        receiverSignaturePublicId:
+          payload.status === DeliveryNoteStatus.DELIVERED
+            ? payload.receiverSignaturePublicId || note.receiverSignaturePublicId
+            : note.receiverSignaturePublicId,
         deliveredAt: payload.status === DeliveryNoteStatus.DELIVERED ? new Date() : payload.status === DeliveryNoteStatus.CANCELLED ? null : note.deliveredAt,
       },
       include: deliveryNoteInclude,
@@ -537,7 +549,7 @@ export async function updateDeliveryNoteStatus(
         saved.orderId,
         `Bon de livraison ${saved.noteNumber} mis à jour`,
         payload.status === DeliveryNoteStatus.DELIVERED
-          ? 'Le bon de livraison a été marqué comme livré.'
+          ? `Le bon de livraison a été marqué comme livré.${payload.receiverName?.trim() ? ` Receveur: ${payload.receiverName.trim()}.` : ''}`
           : payload.status === DeliveryNoteStatus.IN_TRANSIT
             ? 'Le bon de livraison est en cours de transport.'
             : payload.status === DeliveryNoteStatus.CANCELLED

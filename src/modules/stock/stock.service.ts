@@ -198,7 +198,7 @@ async function listDeliveryAgents() {
 }
 
 export async function getStockDashboard() {
-  const [shipments, reports, deliveryAgents, orders, products] = await Promise.all([
+  const [shipments, reports, deliveryAgents, orders, posSales, products] = await Promise.all([
     prisma.buyerStockShipment.findMany({
       include: {
         buyer: { select: { id: true, firstName: true, lastName: true, phone: true, email: true } },
@@ -224,6 +224,58 @@ export async function getStockDashboard() {
       include: {
         customer: { select: { firstName: true, lastName: true } },
         deliveryAgent: { select: { id: true, firstName: true, lastName: true, phone: true } },
+        items: {
+          include: {
+            product: { select: { id: true, name: true, weightLbs: true } },
+            productVariant: { select: { id: true, label: true, weightLbs: true } },
+          },
+        },
+        deliveryNotes: {
+          where: { status: { not: 'CANCELLED' } },
+          include: {
+            items: {
+              select: {
+                id: true,
+                orderItemId: true,
+                deliveredQuantity: true,
+                remainingQuantity: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 40,
+    }),
+    prisma.posSale.findMany({
+      where: {
+        deliveryRequested: true,
+        status: 'COMPLETED',
+      },
+      include: {
+        createdBy: { select: { id: true, firstName: true, lastName: true, email: true } },
+        items: {
+          include: {
+            product: { select: { id: true, name: true, weightLbs: true } },
+            productVariant: { select: { id: true, label: true, weightLbs: true } },
+          },
+        },
+        deliveryNotes: {
+          where: { status: { not: 'CANCELLED' } },
+          include: {
+            deliveryAgent: { select: { id: true, firstName: true, lastName: true, phone: true } },
+            items: {
+              select: {
+                id: true,
+                posSaleItemId: true,
+                deliveredQuantity: true,
+                remainingQuantity: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 40,
@@ -256,6 +308,7 @@ export async function getStockDashboard() {
       receivedShipments: serializedShipments.filter((shipment) => shipment.status === 'RECEIVED').length,
       lowStockProducts: products.filter((product) => Number(product.stockQuantity) <= 5).length,
       assignableOrders: orders.filter((order) => !order.deliveryAgentId).length,
+      assignablePosSales: posSales.filter((sale) => (sale.deliveryNotes || []).length === 0).length,
     },
     shipments: serializedShipments,
     reports: serializedReports,
@@ -265,6 +318,47 @@ export async function getStockDashboard() {
       subtotalAmount: toNumber(order.subtotalAmount),
       deliveryFee: toNumber(order.deliveryFee),
       totalAmount: toNumber(order.totalAmount),
+      items: order.items.map((item) => ({
+        ...item,
+        unitPrice: toNumber(item.unitPrice),
+        product: {
+          ...item.product,
+          weightLbs: toNumber(item.product.weightLbs),
+        },
+        productVariant: item.productVariant
+          ? {
+              ...item.productVariant,
+              weightLbs: toNumber(item.productVariant.weightLbs),
+            }
+          : null,
+      })),
+    })),
+    posSales: posSales.map((sale) => ({
+      ...sale,
+      subtotalAmount: toNumber(sale.subtotalAmount),
+      discountAmount: toNumber(sale.discountAmount),
+      deliveryFee: toNumber(sale.deliveryFee),
+      totalAmount: toNumber(sale.totalAmount),
+      totalWeightLbs: toNumber(sale.totalWeightLbs),
+      items: sale.items.map((item) => ({
+        ...item,
+        unitPrice: toNumber(item.unitPrice),
+        lineTotal: toNumber(item.lineTotal),
+        product: {
+          ...item.product,
+          weightLbs: toNumber(item.product.weightLbs),
+        },
+        productVariant: item.productVariant
+          ? {
+              ...item.productVariant,
+              weightLbs: toNumber(item.productVariant.weightLbs),
+            }
+          : null,
+      })),
+      deliveryNotes: sale.deliveryNotes.map((note) => ({
+        ...note,
+        totalWeightLbs: toNumber(note.totalWeightLbs),
+      })),
     })),
     products: products.map((product) => ({
       ...product,
