@@ -458,6 +458,7 @@ model DeliveryNote {
   totalWeightLbs   Decimal                @default(0) @db.Decimal(10, 2)
   deliveredAt      DateTime?
   items            DeliveryNoteItem[]
+  deliveryReports  DeliveryAgentReport[]
   createdAt        DateTime               @default(now())
   updatedAt        DateTime               @updatedAt
 
@@ -553,12 +554,19 @@ model DeliveryAgentReport {
   id             String   @id @default(uuid())
   deliveryAgentId String
   deliveryAgent   User     @relation("DeliveryAgentReports", fields: [deliveryAgentId], references: [id])
+  deliveryNoteId  String?
+  deliveryNote    DeliveryNote? @relation(fields: [deliveryNoteId], references: [id], onDelete: SetNull)
   title          String
   shiftDate      DateTime
   summary        String
   totalAssigned  Int      @default(0)
   deliveredCount Int      @default(0)
   failedCount    Int      @default(0)
+  remainingAssigned Int   @default(0)
+  totalDeliveredWeightLbs Decimal @default(0) @db.Decimal(10, 2)
+  totalDeliveredWeightKg Decimal  @default(0) @db.Decimal(10, 2)
+  weightUnit     String   @default("LBS")
+  reportItems    Json?
   cashCollected  Decimal  @default(0) @db.Decimal(10, 2)
   cashCollectionMethod AccountingChannel @default(CASH)
   fieldExpenses  Decimal  @default(0) @db.Decimal(10, 2)
@@ -571,6 +579,7 @@ model DeliveryAgentReport {
   updatedAt      DateTime @updatedAt
 
   @@index([deliveryAgentId, createdAt])
+  @@index([deliveryNoteId])
   @@index([shiftDate])
 }
 
