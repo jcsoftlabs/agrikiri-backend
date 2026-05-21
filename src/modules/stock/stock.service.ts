@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { createError } from '../../middleware/error.middleware';
+import type { AuthRequest } from '../../middleware/auth.middleware';
 import { updateOrderTracking } from '../orders/orders.service';
 import {
   AssignOrderDeliveryInput,
@@ -36,6 +37,28 @@ function serializeReport(report: any) {
     productionInputItems: Array.isArray(report.productionInputItems) ? report.productionInputItems : [],
     productionOrderOutputItems: Array.isArray(report.productionOrderOutputItems) ? report.productionOrderOutputItems : [],
   };
+}
+
+async function loadStockReport(reportId: string) {
+  const report = await prisma.stockManagerReport.findUnique({
+    where: { id: reportId },
+    include: {
+      stockManager: { select: { id: true, firstName: true, lastName: true, email: true } },
+      linkedShipments: {
+        select: {
+          id: true,
+          title: true,
+          buyer: { select: { firstName: true, lastName: true } },
+        },
+      },
+    },
+  });
+
+  if (!report) {
+    throw createError('Rapport stock introuvable.', 404);
+  }
+
+  return serializeReport(report);
 }
 
 async function resolveInventoryLine(
@@ -538,4 +561,12 @@ export async function getBoardStockReports() {
     overview,
     reports: serializedReports,
   };
+}
+
+export async function getStockReportById(reportId: string, user: NonNullable<AuthRequest['user']>) {
+  if (!['ADMIN', 'ASSOCIATE', 'STOCK_MANAGER'].includes(user.role)) {
+    throw createError('Accès refusé à ce rapport stock.', 403);
+  }
+
+  return loadStockReport(reportId);
 }

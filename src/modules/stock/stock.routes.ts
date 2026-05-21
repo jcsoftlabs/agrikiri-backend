@@ -17,6 +17,7 @@ router.post('/buyer-shipments/:id/confirm', requireRole('STOCK_MANAGER', 'ADMIN'
 router.patch('/quantities', requireRole('STOCK_MANAGER', 'ADMIN'), asyncHandler(controller.updateStockQuantity));
 router.patch('/orders/:id/assign-delivery', requireRole('STOCK_MANAGER', 'ADMIN'), asyncHandler(controller.assignOrderToDelivery));
 router.post('/reports', requireRole('STOCK_MANAGER', 'ADMIN'), asyncHandler(controller.createStockManagerReport));
+router.get('/reports/:id/document', requireRole('STOCK_MANAGER', 'ADMIN', 'ASSOCIATE'), asyncHandler(controller.downloadStockReportPdf));
 router.get('/board/reports', requireAssociate, asyncHandler(controller.getBoardStockReports));
 
 export default router;
