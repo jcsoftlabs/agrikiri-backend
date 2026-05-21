@@ -108,6 +108,39 @@ function toMethodRows(store: Map<string, number>) {
     .sort((a, b) => b.amount - a.amount);
 }
 
+async function createOrderTrackingEventIfNeeded(
+  orderId: string,
+  title: string,
+  description: string,
+  status: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED',
+  isCustomerVisible: boolean = true
+) {
+  const existing = await prisma.orderTrackingEvent.findFirst({
+    where: {
+      orderId,
+      title,
+      description,
+      status,
+      isCustomerVisible,
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  return prisma.orderTrackingEvent.create({
+    data: {
+      orderId,
+      title,
+      description,
+      status,
+      isCustomerVisible,
+    },
+  });
+}
+
 type DashboardPeriodData = Awaited<ReturnType<typeof loadAccountingPeriodData>>;
 type AccountingOperation = {
   id: string;
@@ -871,7 +904,7 @@ export async function reconcileCashOrder(orderId: string, userId: string) {
   if (order.status !== 'DELIVERED') throw createError('La commande doit être livrée avant rapprochement', 400);
   if (order.cashReconciledAt || order.paymentStatus === 'PAID') throw createError('Cette commande est déjà rapprochée', 400);
 
-  return prisma.order.update({
+  const reconciled = await prisma.order.update({
     where: { id: orderId },
     data: {
       paymentStatus: 'PAID',
@@ -886,6 +919,16 @@ export async function reconcileCashOrder(orderId: string, userId: string) {
       cashReconciledAt: true,
     },
   });
+
+  await createOrderTrackingEventIfNeeded(
+    orderId,
+    'Paiement confirmé',
+    'Le paiement de la commande a été validé par l’administration.',
+    'DELIVERED',
+    true
+  );
+
+  return reconciled;
 }
 
 export async function validateOutflow(userId: string, payload: { type: 'BUYER_ALLOCATION' | 'BUYER_REPORT' | 'DELIVERY_REPORT'; id: string }) {

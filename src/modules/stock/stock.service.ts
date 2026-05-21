@@ -494,7 +494,7 @@ export async function assignOrderToDelivery(orderId: string, data: AssignOrderDe
     deliveryAgentPhone: deliveryAgent.phone || '',
     deliveryZone: data.deliveryZone,
     estimatedDeliveryDate: data.estimatedDeliveryDate,
-    eventTitle: 'Commande assignée par le gestionnaire de stock',
+    eventTitle: 'Commande assignée au livreur',
     eventDescription: `Commande assignée à ${deliveryAgent.firstName} ${deliveryAgent.lastName}.`,
     eventStatus: 'PROCESSING',
     isCustomerVisible: false,

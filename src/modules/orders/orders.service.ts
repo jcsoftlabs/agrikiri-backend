@@ -157,11 +157,29 @@ async function createTrackingEvent(
   status?: 'PENDING' | 'PROCESSING' | 'SHIPPED' | 'DELIVERED' | 'DELIVERY_FAILED' | 'CANCELLED',
   isCustomerVisible: boolean = true
 ) {
+  const normalizedTitle = title.trim();
+  const normalizedDescription = description?.trim() || null;
+
+  const existing = await prismaClient.orderTrackingEvent.findFirst({
+    where: {
+      orderId,
+      title: normalizedTitle,
+      description: normalizedDescription,
+      status: status || null,
+      isCustomerVisible,
+    },
+    select: { id: true },
+  });
+
+  if (existing) {
+    return existing;
+  }
+
   await prismaClient.orderTrackingEvent.create({
     data: {
       orderId,
-      title,
-      description,
+      title: normalizedTitle,
+      description: normalizedDescription,
       status,
       isCustomerVisible,
     },
@@ -1060,15 +1078,15 @@ export async function updateDeliveryAgentOrderStatus(
         ? 'Commande livrée'
         : status === 'DELIVERY_FAILED'
           ? 'Échec de livraison'
-          : 'Commande prise en charge',
-      (status === 'DELIVERED' ? deliveredDescription : proof?.note?.trim()) || (
+          : 'Commande assignée au livreur',
+    (status === 'DELIVERED' ? deliveredDescription : proof?.note?.trim()) || (
         status === 'SHIPPED'
           ? 'Le livreur AGRIKIRI est en route.'
           : status === 'DELIVERED'
             ? 'La commande a été remise au client.'
             : status === 'DELIVERY_FAILED'
               ? 'La tentative de livraison a échoué.'
-          : 'Le livreur AGRIKIRI a pris la commande en charge.'
+          : 'La commande est maintenant confiée au livreur AGRIKIRI.'
       ),
       status,
       true
