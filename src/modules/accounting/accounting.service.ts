@@ -108,6 +108,10 @@ function toMethodRows(store: Map<string, number>) {
     .sort((a, b) => b.amount - a.amount);
 }
 
+function toIsoDayKey(date?: Date | null) {
+  return date ? date.toISOString().slice(0, 10) : null;
+}
+
 async function createOrderTrackingEventIfNeeded(
   orderId: string,
   title: string,
@@ -167,6 +171,44 @@ type ApprovedBudgetEnvelope = {
   linkedAllocationsCount: number;
 };
 
+function getCountableDeliveryCashReports(data: DashboardPeriodData) {
+  const matchedPaidCashOrderIds = new Set<string>();
+
+  return data.deliveryReports.filter((report) => {
+    const cashCollected = roundMoney(toNumber(report.cashCollected));
+
+    if (cashCollected <= 0) {
+      return false;
+    }
+
+    const reportDayKeys = new Set(
+      [toIsoDayKey(report.createdAt), toIsoDayKey(report.shiftDate)].filter(Boolean) as string[]
+    );
+
+    const duplicatedPaidCashOrder = data.paidOrders.find((order) => {
+      if (matchedPaidCashOrderIds.has(order.id)) return false;
+      if (order.paymentMethod !== 'CASH') return false;
+      if (!order.cashReconciledAt) return false;
+      if (roundMoney(toNumber(order.totalAmount)) !== cashCollected) return false;
+
+      const orderDayKeys = [
+        toIsoDayKey(order.createdAt),
+        toIsoDayKey(order.deliveredAt),
+        toIsoDayKey(order.cashReconciledAt),
+      ].filter(Boolean) as string[];
+
+      return orderDayKeys.some((dayKey) => reportDayKeys.has(dayKey));
+    });
+
+    if (duplicatedPaidCashOrder) {
+      matchedPaidCashOrderIds.add(duplicatedPaidCashOrder.id);
+      return false;
+    }
+
+    return true;
+  });
+}
+
 async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
   const rangeWhere = { gte: startDate, lte: endDate };
 
@@ -193,6 +235,8 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         totalAmount: true,
         paymentMethod: true,
         createdAt: true,
+        deliveredAt: true,
+        cashReconciledAt: true,
         customer: { select: { firstName: true, lastName: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -223,6 +267,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         fieldExpenses: true,
         fieldExpensesMethod: true,
         accountingValidatedAt: true,
+        shiftDate: true,
         createdAt: true,
         deliveryAgent: { select: { firstName: true, lastName: true } },
       },
@@ -467,11 +512,15 @@ function buildAlerts(current: ReturnType<typeof buildOverview>, previous: Return
 }
 
 function buildOverview(data: DashboardPeriodData) {
+  const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   const totalOnlinePaid = data.paidOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
   const totalPosSales = data.posSales
     .filter((sale) => sale.documentType !== 'PROFORMA')
     .reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
-  const deliveryCashCollected = data.deliveryReports.reduce((sum, report) => sum + toNumber(report.cashCollected), 0);
+  const deliveryCashCollected = countableDeliveryCashReports.reduce(
+    (sum, report) => sum + toNumber(report.cashCollected),
+    0
+  );
   const buyerAllocated = data.allocations
     .filter((allocation) => Boolean(allocation.accountingValidatedAt))
     .reduce((sum, allocation) => sum + toNumber(allocation.amountAllocated), 0);
@@ -526,6 +575,7 @@ function buildOverview(data: DashboardPeriodData) {
 }
 
 function buildMethodBreakdowns(data: DashboardPeriodData) {
+  const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   const inflows = new Map<string, number>();
   const outflows = new Map<string, number>();
 
@@ -538,8 +588,11 @@ function buildMethodBreakdowns(data: DashboardPeriodData) {
     pushMethodAmount(inflows, sale.paymentMethod, toNumber(sale.totalAmount));
   }
 
-  for (const report of data.deliveryReports) {
+  for (const report of countableDeliveryCashReports) {
     pushMethodAmount(inflows, report.cashCollectionMethod, toNumber(report.cashCollected));
+  }
+
+  for (const report of data.deliveryReports) {
     pushMethodAmount(outflows, report.fieldExpensesMethod, toNumber(report.fieldExpenses));
   }
 
@@ -596,6 +649,7 @@ function escapeCsv(value: string | number | null | undefined) {
 }
 
 function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
+  const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   return [
     ...data.paidOrders.map((order) => ({
       id: `order-${order.id}`,
@@ -621,7 +675,7 @@ function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
         direction: 'INFLOW' as const,
         status: 'completed' as const,
       })),
-    ...data.deliveryReports
+    ...countableDeliveryCashReports
       .filter((report) => toNumber(report.cashCollected) > 0)
       .map((report) => ({
         id: `delivery-cash-${report.id}`,
