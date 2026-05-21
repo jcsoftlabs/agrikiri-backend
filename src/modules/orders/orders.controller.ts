@@ -33,6 +33,7 @@ function formatStatus(status?: string | null) {
     DELIVERED: 'Livrée',
     DELIVERY_FAILED: 'Échec de livraison',
     CANCELLED: 'Annulée',
+    PARTIALLY_PAID: 'Partiellement payée',
     PAID: 'Payée',
     FAILED: 'Échoué',
   };

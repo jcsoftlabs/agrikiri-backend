@@ -553,7 +553,7 @@ export async function createOrder(
 export async function markOrderPaid(orderId: string) {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { id: true, paymentStatus: true },
+    select: { id: true, paymentStatus: true, totalAmount: true },
   });
 
   if (!existing) {
@@ -566,7 +566,11 @@ export async function markOrderPaid(orderId: string) {
 
   const order = await prisma.order.update({
     where: { id: orderId },
-    data: { paymentStatus: 'PAID', status: 'PROCESSING' },
+    data: {
+      paymentStatus: 'PAID',
+      amountCollected: existing.totalAmount,
+      status: 'PROCESSING',
+    },
     include: {
       items: {
         include: {
@@ -796,6 +800,8 @@ export async function updateOrderStatus(
 
   const updateData: any = { status };
   if (paymentStatus) updateData.paymentStatus = paymentStatus;
+  if (paymentStatus === 'PAID') updateData.amountCollected = order.totalAmount;
+  if (paymentStatus === 'FAILED') updateData.amountCollected = 0;
   if (status === 'SHIPPED' && !order.shippedAt) {
     updateData.shippedAt = new Date();
   }

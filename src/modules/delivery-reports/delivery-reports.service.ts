@@ -14,6 +14,10 @@ function roundWeight(value: number) {
   return Number(value.toFixed(2));
 }
 
+function roundMoney(value: number) {
+  return Number(value.toFixed(2));
+}
+
 function toKgFromLbs(value: number) {
   return roundWeight(value / LBS_PER_KG);
 }
@@ -73,6 +77,51 @@ function serializeReport(report: any) {
   };
 }
 
+async function syncCashCollectionForOrder(orderId: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      totalAmount: true,
+      paymentMethod: true,
+    },
+  });
+
+  if (!order || order.paymentMethod !== 'CASH') {
+    return;
+  }
+
+  const deliveryReports = await prisma.deliveryAgentReport.findMany({
+    where: {
+      deliveryNote: {
+        orderId,
+      },
+    },
+    select: {
+      cashCollected: true,
+    },
+  });
+
+  const totalAmount = roundMoney(toNumber(order.totalAmount));
+  const rawCollected = roundMoney(deliveryReports.reduce((sum, report) => sum + toNumber(report.cashCollected), 0));
+  const amountCollected = Math.min(rawCollected, totalAmount);
+
+  const paymentStatus =
+    amountCollected <= 0
+      ? 'PENDING'
+      : amountCollected + 0.001 >= totalAmount
+        ? 'PAID'
+        : 'PARTIALLY_PAID';
+
+  await prisma.order.update({
+    where: { id: orderId },
+    data: {
+      amountCollected: new Prisma.Decimal(amountCollected.toFixed(2)),
+      paymentStatus,
+    },
+  });
+}
+
 export async function createDeliveryReport(deliveryAgentId: string, data: CreateDeliveryReportInput) {
   const deliveryAgent = await prisma.user.findFirst({
     where: {
@@ -98,6 +147,7 @@ export async function createDeliveryReport(deliveryAgentId: string, data: Create
   let totalDeliveredWeightLbs = 0;
   let totalDeliveredWeightKg = 0;
   let serializedItems: SerializedReportItem[] = [];
+  let linkedCashOrderId: string | null = null;
 
   if (data.deliveryNoteId) {
     const deliveryNote = await prisma.deliveryNote.findFirst({
@@ -105,7 +155,16 @@ export async function createDeliveryReport(deliveryAgentId: string, data: Create
         id: data.deliveryNoteId,
         deliveryAgentId,
       },
-      include: { items: true },
+      include: {
+        items: true,
+        order: {
+          select: {
+            id: true,
+            totalAmount: true,
+            paymentMethod: true,
+          },
+        },
+      },
     });
 
     if (!deliveryNote) {
@@ -114,6 +173,41 @@ export async function createDeliveryReport(deliveryAgentId: string, data: Create
 
     if (deliveryNote.status === 'CANCELLED') {
       throw createError('Ce bon de livraison est annulé.', 400);
+    }
+
+    if (deliveryNote.order?.paymentMethod && deliveryNote.order.paymentMethod !== 'CASH' && data.cashCollected > 0) {
+      throw createError('Cette commande n’est pas configurée pour un encaissement cash à la livraison.', 400);
+    }
+
+    if (deliveryNote.order?.paymentMethod === 'CASH') {
+      const previousOrderCashReports = await prisma.deliveryAgentReport.findMany({
+        where: {
+          deliveryNote: {
+            orderId: deliveryNote.order.id,
+          },
+        },
+        select: {
+          cashCollected: true,
+        },
+      });
+
+      const alreadyCollected = roundMoney(
+        previousOrderCashReports.reduce((sum, report) => sum + toNumber(report.cashCollected), 0)
+      );
+      const orderTotalAmount = roundMoney(toNumber(deliveryNote.order.totalAmount));
+      const remainingCashDue = roundMoney(Math.max(0, orderTotalAmount - alreadyCollected));
+
+      if (roundMoney(Number(data.cashCollected)) > remainingCashDue + 0.001) {
+        throw createError(
+          `Le montant encaissé dépasse le reste à payer sur cette commande (${remainingCashDue.toLocaleString('fr-FR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })} HTG).`,
+          400
+        );
+      }
+
+      linkedCashOrderId = deliveryNote.order.id;
     }
 
     const previousReports = await prisma.deliveryAgentReport.findMany({
@@ -240,6 +334,10 @@ export async function createDeliveryReport(deliveryAgentId: string, data: Create
       },
     },
   });
+
+  if (linkedCashOrderId && Number(data.cashCollected) > 0) {
+    await syncCashCollectionForOrder(linkedCashOrderId);
+  }
 
   return serializeReport(report);
 }

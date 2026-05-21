@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { createError } from '../../middleware/error.middleware';
 
@@ -171,26 +172,32 @@ type ApprovedBudgetEnvelope = {
   linkedAllocationsCount: number;
 };
 
-function getCountableDeliveryCashReports(data: DashboardPeriodData) {
-  const matchedPaidCashOrderIds = new Set<string>();
+function getCountablePaidOrders(data: DashboardPeriodData) {
+  const matchedLegacyCashOrderIds = new Set<string>();
 
-  return data.deliveryReports.filter((report) => {
-    const cashCollected = roundMoney(toNumber(report.cashCollected));
+  return data.paidOrders.filter((order) => {
+    if (order.paymentMethod !== 'CASH') {
+      return true;
+    }
 
-    if (cashCollected <= 0) {
+    const hasLinkedCashDeliveryReport = data.deliveryReports.some(
+      (report) => toNumber(report.cashCollected) > 0 && report.deliveryNote?.orderId === order.id
+    );
+
+    if (hasLinkedCashDeliveryReport) {
       return false;
     }
 
-    const reportDayKeys = new Set(
-      [toIsoDayKey(report.createdAt), toIsoDayKey(report.shiftDate)].filter(Boolean) as string[]
-    );
-
-    const duplicatedPaidCashOrder = data.paidOrders.find((order) => {
-      if (matchedPaidCashOrderIds.has(order.id)) return false;
-      if (order.paymentMethod !== 'CASH') return false;
+    const duplicatedLegacyCashReport = data.deliveryReports.find((report) => {
+      if (matchedLegacyCashOrderIds.has(order.id)) return false;
+      const cashCollected = roundMoney(toNumber(report.cashCollected));
+      if (cashCollected <= 0) return false;
       if (!order.cashReconciledAt) return false;
       if (roundMoney(toNumber(order.totalAmount)) !== cashCollected) return false;
 
+      const reportDayKeys = new Set(
+        [toIsoDayKey(report.createdAt), toIsoDayKey(report.shiftDate)].filter(Boolean) as string[]
+      );
       const orderDayKeys = [
         toIsoDayKey(order.createdAt),
         toIsoDayKey(order.deliveredAt),
@@ -200,13 +207,17 @@ function getCountableDeliveryCashReports(data: DashboardPeriodData) {
       return orderDayKeys.some((dayKey) => reportDayKeys.has(dayKey));
     });
 
-    if (duplicatedPaidCashOrder) {
-      matchedPaidCashOrderIds.add(duplicatedPaidCashOrder.id);
+    if (duplicatedLegacyCashReport) {
+      matchedLegacyCashOrderIds.add(order.id);
       return false;
     }
 
     return true;
   });
+}
+
+function getCountableDeliveryCashReports(data: DashboardPeriodData) {
+  return data.deliveryReports.filter((report) => roundMoney(toNumber(report.cashCollected)) > 0);
 }
 
 async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
@@ -233,6 +244,7 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         id: true,
         orderNumber: true,
         totalAmount: true,
+        amountCollected: true,
         paymentMethod: true,
         createdAt: true,
         deliveredAt: true,
@@ -269,6 +281,11 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
         accountingValidatedAt: true,
         shiftDate: true,
         createdAt: true,
+        deliveryNote: {
+          select: {
+            orderId: true,
+          },
+        },
         deliveryAgent: { select: { firstName: true, lastName: true } },
       },
       orderBy: { createdAt: 'asc' },
@@ -344,12 +361,14 @@ async function loadAccountingPeriodData(startDate: Date, endDate: Date) {
       where: {
         status: 'DELIVERED',
         paymentMethod: 'CASH',
-        paymentStatus: { not: 'PAID' },
+        cashReconciledAt: null,
       },
       select: {
         id: true,
         orderNumber: true,
         totalAmount: true,
+        amountCollected: true,
+        paymentStatus: true,
         deliveredAt: true,
         customer: { select: { firstName: true, lastName: true } },
       },
@@ -401,6 +420,8 @@ function buildTimeline(
   startDate: Date,
   data: DashboardPeriodData
 ) {
+  const countablePaidOrders = getCountablePaidOrders(data);
+  const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   const labels = Array.from({ length: days }, (_, index) => {
     const date = new Date(startDate);
     date.setDate(startDate.getDate() + index);
@@ -415,7 +436,7 @@ function buildTimeline(
 
   const byKey = new Map(labels.map((entry) => [entry.key, entry]));
 
-  for (const order of data.paidOrders) {
+  for (const order of countablePaidOrders) {
     const key = order.createdAt.toISOString().slice(0, 10);
     const day = byKey.get(key);
     if (day) day.inflows += toNumber(order.totalAmount);
@@ -426,6 +447,12 @@ function buildTimeline(
     const key = sale.createdAt.toISOString().slice(0, 10);
     const day = byKey.get(key);
     if (day) day.inflows += toNumber(sale.totalAmount);
+  }
+
+  for (const report of countableDeliveryCashReports) {
+    const key = report.createdAt.toISOString().slice(0, 10);
+    const day = byKey.get(key);
+    if (day) day.inflows += toNumber(report.cashCollected);
   }
 
   for (const allocation of data.allocations) {
@@ -512,8 +539,9 @@ function buildAlerts(current: ReturnType<typeof buildOverview>, previous: Return
 }
 
 function buildOverview(data: DashboardPeriodData) {
+  const countablePaidOrders = getCountablePaidOrders(data);
   const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
-  const totalOnlinePaid = data.paidOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
+  const totalOnlinePaid = countablePaidOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
   const totalPosSales = data.posSales
     .filter((sale) => sale.documentType !== 'PROFORMA')
     .reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
@@ -544,7 +572,16 @@ function buildOverview(data: DashboardPeriodData) {
   const buyerReported = data.buyerReports.reduce((sum, report) => sum + toNumber(report.totalReported), 0);
   const deliveryFieldExpenses = data.deliveryReports.reduce((sum, report) => sum + toNumber(report.fieldExpenses), 0);
   const pendingFundRequestsAmount = data.pendingFundRequests.reduce((sum, request) => sum + toNumber(request.amountRequested), 0);
-  const pendingCodAmount = data.deliveredCashOrders.reduce((sum, order) => sum + toNumber(order.totalAmount), 0);
+  const pendingCodAmount = data.deliveredCashOrders.reduce((sum, order) => {
+    const totalAmount = roundMoney(toNumber(order.totalAmount));
+    const amountCollected = roundMoney(toNumber(order.amountCollected));
+
+    if (order.paymentStatus === 'PAID') {
+      return sum + amountCollected;
+    }
+
+    return sum + Math.max(0, roundMoney(totalAmount - amountCollected));
+  }, 0);
   const pendingBuyerBalance = data.buyerReports.reduce((sum, report) => sum + toNumber(report.remainingAmount), 0);
   const totalInflows = totalOnlinePaid + totalPosSales + deliveryCashCollected;
   const totalOutflows = buyerAllocated + deliveryFieldExpenses;
@@ -575,11 +612,12 @@ function buildOverview(data: DashboardPeriodData) {
 }
 
 function buildMethodBreakdowns(data: DashboardPeriodData) {
+  const countablePaidOrders = getCountablePaidOrders(data);
   const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   const inflows = new Map<string, number>();
   const outflows = new Map<string, number>();
 
-  for (const order of data.paidOrders) {
+  for (const order of countablePaidOrders) {
     pushMethodAmount(inflows, order.paymentMethod, toNumber(order.totalAmount));
   }
 
@@ -649,9 +687,10 @@ function escapeCsv(value: string | number | null | undefined) {
 }
 
 function buildJournalEntries(data: DashboardPeriodData): AccountingOperation[] {
+  const countablePaidOrders = getCountablePaidOrders(data);
   const countableDeliveryCashReports = getCountableDeliveryCashReports(data);
   return [
-    ...data.paidOrders.map((order) => ({
+    ...countablePaidOrders.map((order) => ({
       id: `order-${order.id}`,
       type: 'Encaissement online',
       label: order.orderNumber,
@@ -867,7 +906,10 @@ export async function getAccountingDashboard(range: string = '30d', startDatePar
       id: order.id,
       orderNumber: order.orderNumber,
       customer: `${order.customer.firstName} ${order.customer.lastName}`,
-      amount: toNumber(order.totalAmount),
+      amount:
+        order.paymentStatus === 'PAID'
+          ? roundMoney(toNumber(order.amountCollected))
+          : Math.max(0, roundMoney(toNumber(order.totalAmount) - toNumber(order.amountCollected))),
       deliveredAt: order.deliveredAt?.toISOString() || null,
     })),
     pendingFundRequests: currentData.pendingFundRequests.map((request) => ({
@@ -948,6 +990,7 @@ export async function reconcileCashOrder(orderId: string, userId: string) {
       paymentStatus: true,
       status: true,
       totalAmount: true,
+      amountCollected: true,
       orderNumber: true,
       cashReconciledAt: true,
     },
@@ -956,12 +999,29 @@ export async function reconcileCashOrder(orderId: string, userId: string) {
   if (!order) throw createError('Commande introuvable', 404);
   if (order.paymentMethod !== 'CASH') throw createError('Seules les commandes cash peuvent être rapprochées ici', 400);
   if (order.status !== 'DELIVERED') throw createError('La commande doit être livrée avant rapprochement', 400);
-  if (order.cashReconciledAt || order.paymentStatus === 'PAID') throw createError('Cette commande est déjà rapprochée', 400);
+  if (order.cashReconciledAt) throw createError('Cette commande est déjà rapprochée', 400);
+
+  const totalAmount = roundMoney(toNumber(order.totalAmount));
+  const amountCollected = roundMoney(toNumber(order.amountCollected));
+
+  if (amountCollected > 0 && amountCollected + 0.001 < totalAmount) {
+    throw createError(
+      `La commande n’est encaissée qu’à ${amountCollected.toLocaleString('fr-FR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })} HTG. Il reste ${roundMoney(totalAmount - amountCollected).toLocaleString('fr-FR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })} HTG à recevoir avant le rapprochement final.`,
+      400
+    );
+  }
 
   const reconciled = await prisma.order.update({
     where: { id: orderId },
     data: {
       paymentStatus: 'PAID',
+      amountCollected: new Prisma.Decimal(totalAmount.toFixed(2)),
       cashReconciledAt: new Date(),
       cashReconciledById: userId,
     },
