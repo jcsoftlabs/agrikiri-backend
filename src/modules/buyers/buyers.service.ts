@@ -105,6 +105,8 @@ function buildOverview(allocations: any[]) {
   const totalFees = allocations.reduce((sum, allocation) => sum + allocation.totalFees, 0);
   const totalReported = allocations.reduce((sum, allocation) => sum + allocation.totalReported, 0);
   const totalRemaining = allocations.reduce((sum, allocation) => sum + allocation.remainingAmount, 0);
+  const linkedAllocations = allocations.filter((allocation) => Boolean(allocation.sourceDossier));
+  const unlinkedAllocations = allocations.filter((allocation) => !allocation.sourceDossier);
 
   return {
     totalAllocated: roundMoney(totalAllocated),
@@ -112,6 +114,13 @@ function buildOverview(allocations: any[]) {
     totalFees: roundMoney(totalFees),
     totalReported: roundMoney(totalReported),
     totalRemaining: roundMoney(totalRemaining),
+    linkedAllocated: roundMoney(linkedAllocations.reduce((sum, allocation) => sum + allocation.amountAllocated, 0)),
+    linkedReported: roundMoney(linkedAllocations.reduce((sum, allocation) => sum + allocation.totalReported, 0)),
+    linkedRemaining: roundMoney(linkedAllocations.reduce((sum, allocation) => sum + allocation.remainingAmount, 0)),
+    unlinkedAllocated: roundMoney(unlinkedAllocations.reduce((sum, allocation) => sum + allocation.amountAllocated, 0)),
+    unlinkedReported: roundMoney(unlinkedAllocations.reduce((sum, allocation) => sum + allocation.totalReported, 0)),
+    unlinkedRemaining: roundMoney(unlinkedAllocations.reduce((sum, allocation) => sum + allocation.remainingAmount, 0)),
+    unlinkedAllocationsCount: unlinkedAllocations.length,
     pendingConfirmations: allocations.filter((allocation) => allocation.status === 'PENDING_CONFIRMATION').length,
     activeAllocations: allocations.filter((allocation) =>
       allocation.status === 'ACTIVE' || allocation.status === 'PARTIALLY_REPORTED'
